@@ -2,7 +2,7 @@
 
 Project Zomboid Build 42 mod that improves situational awareness with alerts for nearby Project A-Life NPCs, sprinters, and zombies approaching from behind. It does not require Project Viewpoint, Viewpoint Extended Support, or A-Life Stance Dots.
 
-Hostile, Careful, Neutral, Friendly, and Allied NPC warnings can each be enabled independently. Hostile and Careful are enabled by default; the other stance alerts are off by default to preserve the previous behavior. If several enabled stances are nearby, alerts appear from highest to lowest priority—Hostile, Careful, Neutral, Friendly, then Allied—with a distinct color for each. Unknown factions continue to use the A-Life default stance of Hostile. The warning distance is configurable from 5 to 100 tiles, with a default of 40. Alerts report distance and direction, and the optional firearm warning identifies carriers within each enabled stance.
+Hostile, Careful, Neutral, Friendly, and Allied NPC warnings can each be enabled independently. Hostile and Careful are enabled by default; the other stance alerts are off by default to preserve the previous behavior. If several enabled stances are nearby, alerts appear from highest to lowest priority—Hostile, Careful, Neutral, Friendly, then Allied—with a distinct color for each. When Project A-Life Jimmy is installed, its “Your people” and allied standing are recognized as Allied instead of being reduced to Friendly. Unknown factions continue to use the A-Life default stance of Hostile. The warning distance is configurable from 5 to 100 tiles, with a default of 40. Alerts report distance and direction, and the optional firearm warning identifies carriers within each enabled stance.
 
 The mod can also warn about regular zombies out of sight behind the player. By default, only zombies on the player's floor with a clear path (not blocked by walls or closed doors) trigger this warning. Both filters are configurable. Balanced range is enabled by default and follows the vanilla perception distance: 3.5 tiles normally and 6.5 with Keen Hearing. Disable balanced range to set a custom distance from 5 to 100 tiles. The rear detection angle is adjustable from 30 to 360 degrees (180 degrees by default), and its directional arrow points toward the nearest detected zombie. Larger angles widen the detection area toward the sides and front. It also works when Project A-Life is not loaded; A-Life NPCs are excluded from the zombie count.
 
@@ -10,7 +10,7 @@ An optional setting (off by default) ignores fallen zombies in rear warnings. Th
 
 Sprinters have their own all-direction warning and dedicated alarm. Configure its distance, same-floor and line-of-sight filters, fallen-zombie handling, sound cue, and volume independently from the other alerts. Sprinter detection excludes A-Life NPCs.
 
-Alerts are disabled while the player is inside a vehicle by default; this can be turned off in Mod Options.
+Vehicle alert suppression is configurable independently for rear zombies, sprinters, and A-Life NPCs. All three are disabled while inside a vehicle by default; sprinter alarms follow the sprinter setting, and the close Hostile alarm follows the A-Life setting. Existing saves migrate the previous vehicle-alert setting to all three controls.
 
 Immersive audio-only alerts can be enabled in Mod Options to hide this mod's HUD cards and display previews while preserving threat detection and all configured alarm sounds.
 

@@ -252,11 +252,24 @@ if PZAPI and PZAPI.ModOptions then
         false,
         "Temporarily logs alert hitbox positions and mouse drag events to console.txt. Turn off after testing."
     )
+    modOptions:addTitle("Vehicle alert controls")
     modOptions:addTickBox(
-        "DisableInVehicle",
-        "Disable alerts while inside a vehicle",
+        "DisableZombieAlertsInVehicle",
+        "Disable zombie alerts while inside a vehicle",
         true,
-        "When enabled, threat detection, alerts, and alarm sounds are suppressed until you leave the vehicle."
+        "Suppresses rear zombie warnings while you are in a vehicle."
+    )
+    modOptions:addTickBox(
+        "DisableSprinterAlertsInVehicle",
+        "Disable sprinter alerts while inside a vehicle",
+        true,
+        "Suppresses sprinter warnings and their dedicated alarm while you are in a vehicle."
+    )
+    modOptions:addTickBox(
+        "DisableALifeAlertsInVehicle",
+        "Disable A-Life alerts while inside a vehicle",
+        true,
+        "Suppresses A-Life NPC warnings and the close Hostile alarm while you are in a vehicle."
     )
     modOptions:addTitle("Alert previews")
     modOptions:addButton(
@@ -366,6 +379,17 @@ if PZAPI and PZAPI.ModOptions then
 end
 
 local SOUND_MIGRATION_MARKER = "migration|ALifeThreatAlert|siren-removed-v1|1"
+local VEHICLE_ALERT_MIGRATION_MARKER = "migration|ALifeThreatAlert|vehicle-alerts-split-v1|1"
+local VEHICLE_ALERT_OPTION_IDS = {
+    "DisableZombieAlertsInVehicle",
+    "DisableSprinterAlertsInVehicle",
+    "DisableALifeAlertsInVehicle",
+}
+local VEHICLE_ALERT_OPTION_SET = {
+    DisableZombieAlertsInVehicle = true,
+    DisableSprinterAlertsInVehicle = true,
+    DisableALifeAlertsInVehicle = true,
+}
 local LEGACY_SOUND_DEFAULTS = {
     AlarmSound = DEFAULT_ALARM_SOUND,
     CloseHostileAlarmSound = DEFAULT_CLOSE_HOSTILE_ALARM_SOUND,
@@ -398,6 +422,37 @@ local function hasSoundMigrationMarker(lines)
     return false
 end
 
+local function readSavedVehicleAlertSettings()
+    local settings = { savedOptions = {} }
+    local hasMarker = false
+    local ok, reader = pcall(function() return getFileReader("ModOptions.ini", true) end)
+    if not ok or not reader then return settings, hasMarker end
+
+    while true do
+        local readOk, line = pcall(function() return reader:readLine() end)
+        if not readOk or line == nil then break end
+        if string.find(line, VEHICLE_ALERT_MIGRATION_MARKER, 1, true) then hasMarker = true end
+        local _, modId, optionId, value = line:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)")
+        if modId == MOD_ID then
+            if optionId == "DisableInVehicle" then
+                if value == "true" then settings.legacyDisable = true end
+                if value == "false" then settings.legacyDisable = false end
+            elseif VEHICLE_ALERT_OPTION_SET[optionId] then
+                settings.savedOptions[optionId] = true
+            end
+        end
+    end
+    pcall(function() reader:close() end)
+    return settings, hasMarker
+end
+
+local function hasVehicleAlertMigrationMarker(lines)
+    for _, line in ipairs(lines or {}) do
+        if string.find(line, VEHICLE_ALERT_MIGRATION_MARKER, 1, true) then return true end
+    end
+    return false
+end
+
 local function migrateLegacySoundIndex(index, default)
     if index == 1 then return 1 end
     if index == 2 then return default end
@@ -410,8 +465,11 @@ if PZAPI and PZAPI.ModOptions and not PZAPI.ModOptions._vtdSirenMigrationInstall
     local originalLoad = PZAPI.ModOptions.load
     PZAPI.ModOptions.load = function(self, ...)
         local selections, fileHasMarker = readSavedSoundSelections()
+        local vehicleSettings, fileHasVehicleMarker = readSavedVehicleAlertSettings()
         local alreadyMigrated = fileHasMarker
             or hasSoundMigrationMarker(PZAPI.ModOptions.OtherOptions)
+        local vehicleAlreadyMigrated = fileHasVehicleMarker
+            or hasVehicleAlertMigrationMarker(PZAPI.ModOptions.OtherOptions)
         originalLoad(self, ...)
 
         if not alreadyMigrated then
@@ -427,6 +485,16 @@ if PZAPI and PZAPI.ModOptions and not PZAPI.ModOptions._vtdSirenMigrationInstall
         if not hasSoundMigrationMarker(PZAPI.ModOptions.OtherOptions) then
             table.insert(PZAPI.ModOptions.OtherOptions, SOUND_MIGRATION_MARKER .. "\r\n")
         end
+
+        if not vehicleAlreadyMigrated and vehicleSettings.legacyDisable ~= nil then
+            for _, optionId in ipairs(VEHICLE_ALERT_OPTION_IDS) do
+                if not vehicleSettings.savedOptions[optionId] then
+                    local option = modOptions and modOptions:getOption(optionId)
+                    if option then option:setValue(vehicleSettings.legacyDisable) end
+                end
+            end
+            table.insert(PZAPI.ModOptions.OtherOptions, VEHICLE_ALERT_MIGRATION_MARKER .. "\r\n")
+        end
     end
     PZAPI.ModOptions._vtdSirenMigrationInstalled = true
 end
@@ -437,7 +505,6 @@ local alertDragHandle
 local zombieAlertPositionX
 local zombieAlertPositionY
 local zombieAlertDragHandle
-local disableAlertsInVehicle = true
 local playerInVehicle = false
 local dragDiagnosticsEnabled = false
 local activeGlobalDragHandle
@@ -1009,22 +1076,86 @@ local function fallbackStance(project, record, player)
     return reputationStance(project, record.factionId) or stance
 end
 
+local function callStance(method, ...)
+    if type(method) ~= "function" then return nil end
+    local ok, value = pcall(method, ...)
+    return ok and normalizeStance(value) or nil
+end
+
+local function jimmyStance(project, record, player)
+    local jimmy = ProjectALifeJimmy
+    if type(jimmy) ~= "table" then return nil end
+
+    local relations = project.Relations
+    local ownOk, ownPerson = pcall(function()
+        return type(jimmy.isOwnPerson) == "function" and jimmy.isOwnPerson(record, player) == true
+    end)
+    local stance = ownOk and ownPerson and "allied" or nil
+    if not stance then
+        local crewStanding = jimmy.CrewStanding
+        if type(crewStanding) == "table" then
+            stance = callStance(crewStanding.labelFor, record, player)
+            if not stance and callStance(crewStanding.standingLabel, record, player) == "allied" then
+                stance = "allied"
+            end
+        end
+    end
+    if not stance then
+        local standing = jimmy.StandingService
+        local keyOk, key = pcall(function()
+            if type(jimmy.playerKey) == "function" then return jimmy.playerKey(player) end
+        end)
+        if keyOk and key ~= nil and type(standing) == "table" then
+            if callStance(standing.labelFor, key, record.factionId) == "allied" then
+                stance = "allied"
+            end
+        end
+    end
+    if not stance or stance == "hostile" then return stance end
+
+    local hostileOk, hostile = pcall(function()
+        return type(relations) == "table" and type(relations.hostileToPlayer) == "function"
+            and relations.hostileToPlayer(record, player) == true
+    end)
+    if hostileOk and hostile then return "hostile" end
+
+    local safety = jimmy.NpcSafety
+    local attackingOk, attacking = pcall(function()
+        return type(safety) == "table" and type(safety.attacking) == "function"
+            and safety.attacking(record, player) == true
+    end)
+    return attackingOk and attacking and "hostile" or stance
+end
+
+local function preserveAlliedStance(project, record, player, stance)
+    if stance == "friendly" and fallbackStance(project, record, player) == "allied" then
+        return "allied"
+    end
+    return stance
+end
+
 local function stanceOf(project, record, player)
     local relations = project.Relations
     if type(relations) == "table" and type(relations.playerStance) == "function" then
         local ok, stance = pcall(relations.playerStance, record, player)
         if ok then
             stance = normalizeStance(stance)
-            if stance then return stance end
+            if stance == "hostile" then return stance end
+            local jimmy = jimmyStance(project, record, player)
+            if jimmy then return jimmy end
+            if stance then return preserveAlliedStance(project, record, player, stance) end
         end
     end
+
+    local jimmy = jimmyStance(project, record, player)
+    if jimmy then return jimmy end
 
     local dots = ALifeStanceDots
     if type(dots) == "table" and type(dots.stanceOf) == "function" then
         local ok, stance = pcall(dots.stanceOf, record, player)
         if ok then
             stance = normalizeStance(stance)
-            if stance then return stance end
+            if stance then return preserveAlliedStance(project, record, player, stance) end
         end
     end
     return fallbackStance(project, record, player)
@@ -1724,11 +1855,15 @@ local function scanNearbyThreats()
         stanceEnabled[stance] = enabled
         warnALifeNPCs = warnALifeNPCs or enabled
     end
-    local warnRearZombies = getOption("EnableRearZombieWarning", true)
-    local warnSprinters = getOption("EnableSprinterWarning", true)
+    local disableZombieAlerts = playerInVehicle and getOption("DisableZombieAlertsInVehicle", true)
+    local disableSprinterAlerts = playerInVehicle and getOption("DisableSprinterAlertsInVehicle", true)
+    local disableALifeAlerts = playerInVehicle and getOption("DisableALifeAlertsInVehicle", true)
+    if disableALifeAlerts then warnALifeNPCs = false end
+    local warnRearZombies = getOption("EnableRearZombieWarning", true) and not disableZombieAlerts
+    local warnSprinters = getOption("EnableSprinterWarning", true) and not disableSprinterAlerts
     local warnSprinterAlarm = getOption("EnableAlarmSound", true)
-        and getOption("EnableSprinterAlarm", true)
-    local warnCloseHostileAlarm = getOption("EnableCloseHostileAlarm", true)
+        and getOption("EnableSprinterAlarm", true) and not disableSprinterAlerts
+    local warnCloseHostileAlarm = getOption("EnableCloseHostileAlarm", true) and not disableALifeAlerts
     if not warnALifeNPCs and not warnRearZombies and not warnCloseHostileAlarm
             and not warnSprinters and not warnSprinterAlarm then return end
 
@@ -1742,7 +1877,6 @@ local function scanNearbyThreats()
             and not warnSprinters and not warnSprinterAlarm then return end
     local player = getSpecificPlayer(0)
     if player == nil or player:isDead() then return end
-    if disableAlertsInVehicle and playerInVehicle then return end
     local playerSquare = player:getCurrentSquare()
     local cell = getCell()
     local list = cell and cell:getZombieList() or nil
@@ -2148,21 +2282,6 @@ local function drawWarning()
         finishArrowLayerPass("live")
         return
     end
-    if disableAlertsInVehicle and playerInVehicle then
-        displayedArrowAngles = {}
-        warnings = {}
-        rearZombieWarning = nil
-        sprinterWarning = nil
-        sprinterAlarmZombieIDs = {}
-        closeHostileNPCs = {}
-        lastAlarmSignature = ""
-        lastCloseHostileNPCs = {}
-        lastSprinterAlarmZombieIDs = {}
-        updateAlertDragHandle(nil, 0, 0)
-        updateAlertDragHandle(nil, 0, 0, "zombie")
-        finishArrowLayerPass("live")
-        return
-    end
     if #warnings == 0 and rearZombieWarning == nil and sprinterWarning == nil then
         displayedArrowAngles = {}
         updateAlertDragHandle(nil, 0, 0)
@@ -2441,14 +2560,11 @@ if Events and Events.OnTick then
         ticks = ticks + 1
         dragDiagnosticsEnabled = getOption("EnableDragDiagnostics", false) == true
         updateGlobalAlertDrag()
-        disableAlertsInVehicle = getOption("DisableInVehicle", true)
         playerInVehicle = false
-        if disableAlertsInVehicle then
-            local player = getSpecificPlayer(0)
-            if player then
-                local ok, vehicle = pcall(function() return player:getVehicle() end)
-                playerInVehicle = ok and vehicle ~= nil
-            end
+        local player = getSpecificPlayer(0)
+        if player then
+            local ok, vehicle = pcall(function() return player:getVehicle() end)
+            playerInVehicle = ok and vehicle ~= nil
         end
         if ticks % SCAN_INTERVAL == 0 then updateWarning() end
     end)
