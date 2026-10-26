@@ -2,19 +2,29 @@ require "PZAPI/ModOptions"
 require "ISUI/ISUIElement"
 
 local MOD_ID = "ALifeThreatAlert"
+local compassALifeBridge = rawget(_G, "ViewpointCompassALifeBridge")
+if type(compassALifeBridge) ~= "table" then
+    compassALifeBridge = { markers = {} }
+    rawset(_G, "ViewpointCompassALifeBridge", compassALifeBridge)
+end
 local DEFAULT_RANGE = 40
 local DEFAULT_CLOSE_HOSTILE_RANGE = 10
 local DEFAULT_ALARM_SOUND = 2
 local DEFAULT_CLOSE_HOSTILE_ALARM_SOUND = 1
-local DEFAULT_SPRINTER_ALARM_SOUND = 3
+local DEFAULT_SPRINTER_ALARM_SOUND = 4
 local DEFAULT_REAR_ZOMBIE_RANGE = 20
 local DEFAULT_SPRINTER_RANGE = 20
-local DEFAULT_SPRINTER_ALARM_DISTANCE = 20
-local DEFAULT_SPRINTER_BLINK_DISTANCE = 3
-local DEFAULT_REAR_ZOMBIE_ANGLE = 180
+local DEFAULT_SPRINTER_ALARM_DISTANCE = 10
+local DEFAULT_SPRINTER_BLINK_DISTANCE = 4
+local DEFAULT_REAR_ZOMBIE_ANGLE = 220
 local DEFAULT_REAR_ZOMBIE_BLINK_DISTANCE = 1.5
 local DEFAULT_RADIAL_INDICATOR_FAR_OPACITY = 35
-local DEFAULT_ALARM_VOLUME = 150
+local DEFAULT_ALARM_VOLUME = 200
+local DEFAULT_CLOSE_HOSTILE_ALARM_VOLUME = 100
+local DEFAULT_SPRINTER_ALARM_VOLUME = 100
+local DEFAULT_MAX_REAR_ZOMBIE_INDICATORS = 2
+local DEFAULT_MAX_SPRINTER_INDICATORS = 2
+local DEFAULT_ALARM_PREVIEW_KEY = Keyboard.KEY_C
 local MAX_ALARM_VOLUME = 200
 local MIN_RANGE = 5
 local MAX_RANGE = 100
@@ -96,6 +106,7 @@ local REAR_ZOMBIE_INDICATOR_YELLOW = { 1, 0.82, 0.12 }
 local REAR_ZOMBIE_INDICATOR_RADII = { 128, 176, 224 }
 local SHADOW_OFFSETS = { {-1, 0}, {1, 0}, {0, -1}, {0, 1} }
 local typeIconTextureCache = {}
+local typeIconTextureRetryAt = {}
 local neatPanelTextureCache = {}
 local rearZombieIndicatorTextureCache = {}
 local rearZombieIndicatorTextureRetryAt = {}
@@ -224,7 +235,7 @@ if PZAPI and PZAPI.ModOptions then
         MAX_REAR_ZOMBIE_ANGLE,
         REAR_ZOMBIE_ANGLE_STEP,
         DEFAULT_REAR_ZOMBIE_ANGLE,
-        "Total angle centered behind you. 180 degrees detects the rear half; larger values widen the area."
+        "Total angle centered behind you. 220 degrees is the default; larger values widen the area."
     )
     modOptions:addSlider(
         "RearZombieBlinkDistance",
@@ -303,7 +314,7 @@ if PZAPI and PZAPI.ModOptions then
         1,
         8,
         1,
-        3,
+        DEFAULT_MAX_REAR_ZOMBIE_INDICATORS,
         "Shows up to this many directional sectors. Zombies in each sector share one indicator."
     )
     modOptions:addSlider(
@@ -312,7 +323,7 @@ if PZAPI and PZAPI.ModOptions then
         1,
         8,
         1,
-        1,
+        DEFAULT_MAX_SPRINTER_INDICATORS,
         "Shows up to this many directions around the full compass, with one indicator for the nearest sprinter in each sector."
     )
 
@@ -365,7 +376,7 @@ if PZAPI and PZAPI.ModOptions then
     modOptions:addTickBox(
         "SprinterIgnoreFallen",
         "Ignore fallen sprinters",
-        true,
+        false,
         "When enabled, sprinters on the ground do not trigger the separate warning."
     )
 
@@ -383,8 +394,8 @@ if PZAPI and PZAPI.ModOptions then
         "Choose how A-Life alerts appear. NeatUI styles require NeatUI_Framework; Vanilla Mode works without it. Zombie and sprinter tracking always uses DayZ-style radial indicators."
     )
     alertDisplayOption:addItem("Compact NeatUI", false)
-    alertDisplayOption:addItem("Full NeatUI", false)
-    alertDisplayOption:addItem("Vanilla Mode", true)
+    alertDisplayOption:addItem("Full NeatUI", true)
+    alertDisplayOption:addItem("Vanilla Mode", false)
     modOptions:addTickBox(
         "EnableDragDiagnostics",
         "Log alert drag diagnostics",
@@ -500,7 +511,7 @@ if PZAPI and PZAPI.ModOptions then
         0,
         MAX_ALARM_VOLUME,
         10,
-        DEFAULT_ALARM_VOLUME,
+        DEFAULT_CLOSE_HOSTILE_ALARM_VOLUME,
         "Volume multiplier for the separate close Hostile A-Life alarm."
     )
     modOptions:addSlider(
@@ -509,7 +520,7 @@ if PZAPI and PZAPI.ModOptions then
         0,
         MAX_ALARM_VOLUME,
         10,
-        DEFAULT_ALARM_VOLUME,
+        DEFAULT_SPRINTER_ALARM_VOLUME,
         "Volume multiplier for the separate sprinter alarm."
     )
     modOptions:addTitle("In-game sound preview")
@@ -524,7 +535,7 @@ if PZAPI and PZAPI.ModOptions then
     modOptions:addKeyBind(
         "AlarmPreviewKey",
         "Play alarm preview in-game",
-        Keyboard.KEY_F9,
+        DEFAULT_ALARM_PREVIEW_KEY,
         "Press this key during gameplay to play the selected alarm through the same function used by real alerts."
     )
 end
@@ -1113,7 +1124,9 @@ getOption = function(name, fallback)
 end
 
 local function alertDisplayMode()
-    local value = math.floor(tonumber(getOption("AlertDisplayMode", ALERT_DISPLAY_MODE_VANILLA)) or ALERT_DISPLAY_MODE_VANILLA)
+    local value = math.floor(tonumber(
+        getOption("AlertDisplayMode", ALERT_DISPLAY_MODE_FULL_NEATUI)
+    ) or ALERT_DISPLAY_MODE_FULL_NEATUI)
     return math.max(ALERT_DISPLAY_MODE_COMPACT_NEATUI,
         math.min(ALERT_DISPLAY_MODE_VANILLA, value))
 end
@@ -1650,15 +1663,39 @@ local function typeIconTexture(kind)
     if not texturePath or not UIManager or not UIManager.DrawTexture then return nil end
 
     local texture = typeIconTextureCache[texturePath]
-    if texture ~= nil then return texture or nil end
-    if type(getTexture) ~= "function" then
-        typeIconTextureCache[texturePath] = false
+    if texture then return texture end
+    if type(getTexture) ~= "function"
+            and (not Texture or type(Texture.trygetTexture) ~= "function") then
         return nil
     end
 
-    local ok, loaded = pcall(getTexture, texturePath)
-    typeIconTextureCache[texturePath] = ok and loaded or false
-    return typeIconTextureCache[texturePath] or nil
+    local now = os and os.time and os.time()
+    if now and typeIconTextureRetryAt[texturePath]
+            and now < typeIconTextureRetryAt[texturePath] then
+        return nil
+    end
+
+    local ok, loaded = pcall(function()
+        if Texture and type(Texture.trygetTexture) == "function" then
+            return Texture.trygetTexture(texturePath)
+        end
+        return getTexture(texturePath)
+    end)
+    if ok and loaded then
+        local errorTexture
+        if Texture and type(Texture.getErrorTexture) == "function" then
+            local errorOk, candidate = pcall(Texture.getErrorTexture)
+            errorTexture = errorOk and candidate or nil
+        end
+        if loaded ~= errorTexture then
+            typeIconTextureCache[texturePath] = loaded
+            typeIconTextureRetryAt[texturePath] = nil
+            return loaded
+        end
+    end
+
+    if now then typeIconTextureRetryAt[texturePath] = now + 1 end
+    return nil
 end
 
 local function neatPanelTexture(path)
@@ -2274,6 +2311,12 @@ local function scanNearbyThreats()
     sprinterWarning = nil
     sprinterAlarmZombieIDs = {}
     closeHostileNPCs = {}
+    compassALifeBridge.markers = {}
+    local compassTracking = compassALifeBridge.requested == true
+    local compassRange = compassTracking and tonumber(compassALifeBridge.range) or 0
+    compassRange = math.max(0, math.min(MAX_RANGE, compassRange or 0))
+    local compassRangeSquared = compassRange * compassRange
+    local compassMarkers = {}
     local stanceEnabled = {}
     local warnALifeNPCs = false
     for _, stance in ipairs(STANCE_PRIORITY) do
@@ -2291,16 +2334,17 @@ local function scanNearbyThreats()
         and getOption("EnableSprinterAlarm", true) and not disableSprinterAlerts
     local warnCloseHostileAlarm = getOption("EnableCloseHostileAlarm", false) and not disableALifeAlerts
     if not warnALifeNPCs and not warnRearZombies and not warnCloseHostileAlarm
-            and not warnSprinters and not warnSprinterAlarm then return end
+            and not warnSprinters and not warnSprinterAlarm and not compassTracking then return end
 
     local project = ProjectALife
     if type(project) ~= "table" then
         project = nil
         warnALifeNPCs = false
         warnCloseHostileAlarm = false
+        compassTracking = false
     end
     if not warnALifeNPCs and not warnRearZombies and not warnCloseHostileAlarm
-            and not warnSprinters and not warnSprinterAlarm then return end
+            and not warnSprinters and not warnSprinterAlarm and not compassTracking then return end
     local player = getSpecificPlayer(0)
     if player == nil or player:isDead() then return end
     local playerSquare = player:getCurrentSquare()
@@ -2328,14 +2372,16 @@ local function scanNearbyThreats()
     local sprinterRangeSquared = sprinterRange * sprinterRange
     sprinterBlinkThreshold = sprinterBlinkDistance()
     local rearZombieIndicatorLimit = math.max(1, math.min(8,
-        math.floor((tonumber(getOption("MaxRearZombieIndicators", 3)) or 3) + 0.5)))
+        math.floor((tonumber(getOption("MaxRearZombieIndicators", DEFAULT_MAX_REAR_ZOMBIE_INDICATORS))
+            or DEFAULT_MAX_REAR_ZOMBIE_INDICATORS) + 0.5)))
     local sprinterIndicatorLimit = math.max(1, math.min(8,
-        math.floor((tonumber(getOption("MaxSprinterIndicators", 1)) or 1) + 0.5)))
+        math.floor((tonumber(getOption("MaxSprinterIndicators", DEFAULT_MAX_SPRINTER_INDICATORS))
+            or DEFAULT_MAX_SPRINTER_INDICATORS) + 0.5)))
     local sprinterAlarmRange = warnSprinterAlarm and sprinterAlarmDistance() or 0
     local sprinterAlarmRangeSquared = sprinterAlarmRange * sprinterAlarmRange
     local rearAngle = rearZombieWarningAngle()
     local rearAngleCos = math.cos(math.rad(rearAngle * 0.5))
-    local scanRangeSquared = math.max(rangeSquared, rearRangeSquared,
+    local scanRangeSquared = math.max(rangeSquared, compassRangeSquared, rearRangeSquared,
         closeHostileRangeSquared, sprinterRangeSquared, sprinterAlarmRangeSquared)
     local showDirectionArrow = getOption("ShowDirectionArrow", true)
     local showFirearmWarning = getOption("ShowFirearmWarning", false)
@@ -2344,7 +2390,7 @@ local function scanNearbyThreats()
     local rearZombieRequireLineOfSight = getOption("RearZombieRequireLineOfSight", true)
     local sprinterSameFloorOnly = getOption("SprinterSameFloorOnly", true)
     local sprinterRequireLineOfSight = getOption("SprinterRequireLineOfSight", true)
-    local sprinterIgnoreFallen = getOption("SprinterIgnoreFallen", true)
+    local sprinterIgnoreFallen = getOption("SprinterIgnoreFallen", false)
     local threatsByStance = {}
     for _, stance in ipairs(STANCE_PRIORITY) do
         threatsByStance[stance] = {
@@ -2416,6 +2462,7 @@ local function scanNearbyThreats()
                     sprinterAlarmCandidate = sprinterAlarmCandidate and passesSprinterVisibility
                 end
                 local alifeCandidate = (warnALifeNPCs and distanceSquared <= rangeSquared)
+                    or (compassTracking and distanceSquared <= compassRangeSquared)
                     or closeHostileCandidate
                 local uid
                 if project and (rearCandidate or alifeCandidate or sprinterCandidate
@@ -2468,6 +2515,16 @@ local function scanNearbyThreats()
                     local record = actorFor(project, uid)
                     if record then
                         local stance = stanceOf(project, record, player)
+                        if compassTracking and distanceSquared <= compassRangeSquared
+                                and STANCES[stance] then
+                            compassMarkers[#compassMarkers + 1] = {
+                                id = uid,
+                                x = x,
+                                y = y,
+                                stance = stance,
+                                armed = carriesFirearm(project, shell),
+                            }
+                        end
                         if closeHostileCandidate and stance == "hostile" then
                             closeHostileNPCs[uid] = true
                         end
@@ -2554,6 +2611,7 @@ local function scanNearbyThreats()
             end
         end
     end
+    compassALifeBridge.markers = compassMarkers
 end
 
 local lastAlarmSignature = ""
@@ -2595,9 +2653,15 @@ playAlarmSound = function(soundOption, volumeOption, selectedSound, selectedVolu
         or tonumber(getOption(soundOption or "AlarmSound", defaultSound)) or defaultSound)
     local soundOption = ALARM_SOUND_OPTIONS[index] or ALARM_SOUND_OPTIONS[1]
     local sound = soundOption.id
+    local defaultVolume = DEFAULT_ALARM_VOLUME
+    if volumeOption == "CloseHostileAlarmVolume" then
+        defaultVolume = DEFAULT_CLOSE_HOSTILE_ALARM_VOLUME
+    elseif volumeOption == "SprinterAlarmVolume" then
+        defaultVolume = DEFAULT_SPRINTER_ALARM_VOLUME
+    end
     local volume = tonumber(selectedVolume)
-        or tonumber(getOption(volumeOption or "AlarmVolume", DEFAULT_ALARM_VOLUME))
-        or DEFAULT_ALARM_VOLUME
+        or tonumber(getOption(volumeOption or "AlarmVolume", defaultVolume))
+        or defaultVolume
     volume = math.max(0, math.min(MAX_ALARM_VOLUME, volume))
     stopAlarmAudio(activeAlarmSound)
     activeAlarmSound = nil
@@ -2652,7 +2716,7 @@ local ALARM_PREVIEW_OPTIONS = {
 }
 
 local function onAlarmPreviewKeyPressed(key)
-    local previewKey = tonumber(getOption("AlarmPreviewKey", Keyboard.KEY_F9))
+    local previewKey = tonumber(getOption("AlarmPreviewKey", DEFAULT_ALARM_PREVIEW_KEY))
     if not previewKey or previewKey == 0 or key ~= previewKey then return end
     local playerOk, player = pcall(getPlayer)
     if not playerOk or player == nil then return end
