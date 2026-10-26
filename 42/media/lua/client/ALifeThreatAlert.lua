@@ -27,7 +27,6 @@ local REAR_ZOMBIE_BLINK_DISTANCE_STEP = 0.5
 local MIN_REAR_ZOMBIE_ANGLE = 30
 local MAX_REAR_ZOMBIE_ANGLE = 360
 local REAR_ZOMBIE_ANGLE_STEP = 5
-local REAR_ZOMBIE_INDICATOR_SECTORS = 3
 local MIN_RADIAL_INDICATOR_ASSET_RADIUS = 96
 local MAX_RADIAL_INDICATOR_ASSET_RADIUS = 320
 local RADIAL_INDICATOR_ASSET_RADIUS_STEP = 16
@@ -129,6 +128,28 @@ end
 
 if PZAPI and PZAPI.ModOptions then
     modOptions = PZAPI.ModOptions:create(MOD_ID, "Viewpoint Threat Detector")
+    modOptions.defaultValues = {}
+    modOptions:addTitle("General")
+    modOptions:addButton(
+        "ResetModOptions",
+        "Reset settings to default",
+        "Restores this mod's settings to their fresh-install defaults.",
+        function()
+            for optionId, defaultValue in pairs(modOptions.defaultValues) do
+                local option = modOptions:getOption(optionId)
+                if option and option.setValue then
+                    local value = defaultValue
+                    if type(defaultValue) == "table" then
+                        value = {}
+                        for key, item in pairs(defaultValue) do
+                            value[key] = item
+                        end
+                    end
+                    option:setValue(value)
+                end
+            end
+        end
+    )
     modOptions:addTitle("A-Life NPC Threats")
     modOptions:addTickBox("EnableHostileWarning", "Warn about nearby hostile NPCs", true)
     modOptions:addTickBox("WarnCarefulNPCs", "Warn about nearby careful NPCs", true)
@@ -266,6 +287,26 @@ if PZAPI and PZAPI.ModOptions then
         "Sprinter indicator color at far range",
         SPRINTER_COLOUR[1], SPRINTER_COLOUR[2], SPRINTER_COLOUR[3], 1,
         "The radial sprinter indicator smoothly blends from its close-range color to this color."
+    )
+
+    modOptions:addTitle("Radial Indicator Limits")
+    modOptions:addSlider(
+        "MaxRearZombieIndicators",
+        "Maximum rear-zombie indicators",
+        1,
+        8,
+        1,
+        3,
+        "Shows up to this many directional sectors. Zombies in each sector share one indicator."
+    )
+    modOptions:addSlider(
+        "MaxSprinterIndicators",
+        "Maximum sprinter indicators",
+        1,
+        8,
+        1,
+        1,
+        "Shows up to this many directions around the full compass, with one indicator for the nearest sprinter in each sector."
     )
 
     modOptions:addTitle("Sprinter Threats")
@@ -485,6 +526,28 @@ if PZAPI and PZAPI.ModOptions then
         Keyboard.KEY_F9,
         "Press this key during gameplay to play the selected alarm through the same function used by real alerts."
     )
+end
+
+if modOptions then
+    modOptions.defaultValues = (function(options)
+        local defaults = {}
+        for _, option in ipairs(options.data) do
+            if option.id and option.getValue then
+                local value = option:getValue()
+                if type(value) == "table" then
+                    value = (function(source)
+                        local copy = {}
+                        for key, item in pairs(source) do
+                            copy[key] = item
+                        end
+                        return copy
+                    end)(value)
+                end
+                defaults[option.id] = value
+            end
+        end
+        return defaults
+    end)(modOptions)
 end
 
 local SOUND_MIGRATION_MARKER = "migration|ALifeThreatAlert|siren-removed-v1|1"
@@ -918,9 +981,10 @@ local function drawSprinterIndicator(indicator, screenWidth, screenHeight)
         "sprinter", sprinterBlinkThreshold, 1.2, indicator.indicatorColour)
 end
 
-local function drawRearZombieIndicators(indicators, screenWidth, screenHeight)
+local function drawRearZombieIndicators(indicators, screenWidth, screenHeight, keyPrefix, blinkThreshold, sizeScale)
     if type(indicators) ~= "table" or #indicators == 0 then return end
 
+    keyPrefix = keyPrefix or "rear-zombie"
     local anchorX = screenWidth * 0.5
     local anchorY = screenHeight * 0.5
     local radius = rearZombieIndicatorAssetRadius(screenHeight)
@@ -928,14 +992,16 @@ local function drawRearZombieIndicators(indicators, screenWidth, screenHeight)
     for index, indicator in ipairs(indicators) do
         activeSectors[indicator.sectorIndex or index] = true
     end
-    for sectorIndex = 1, REAR_ZOMBIE_INDICATOR_SECTORS do
+    for sectorIndex = 1, 8 do
         if not activeSectors[sectorIndex] then
-            displayedArrowAngles["rear-zombie-sector-" .. tostring(sectorIndex)] = nil
+            displayedArrowAngles[keyPrefix .. "-sector-" .. tostring(sectorIndex)] = nil
         end
     end
     for index, indicator in ipairs(indicators) do
         drawRearZombieIndicator(anchorX, anchorY, indicator, radius,
-            "rear-zombie-sector-" .. tostring(indicator.sectorIndex or index))
+            keyPrefix .. "-sector-" .. tostring(indicator.sectorIndex or index),
+            blinkThreshold, sizeScale,
+            keyPrefix == "sprinter" and indicator.indicatorColour or nil)
     end
 end
 
@@ -1354,14 +1420,22 @@ local function signedAngle(angle)
     return angle
 end
 
-local function rearZombieSectorIndex(directionAngleValue, coneDegrees)
+local function rearZombieSectorIndex(directionAngleValue, coneDegrees, sectorCount)
     local coneRadians = math.rad(coneDegrees)
     if coneRadians <= 0 then return 1 end
 
     local relativeAngle = signedAngle(directionAngleValue - math.pi)
     local normalized = (relativeAngle + coneRadians * 0.5) / coneRadians
-    local index = math.floor(normalized * REAR_ZOMBIE_INDICATOR_SECTORS) + 1
-    return math.max(1, math.min(REAR_ZOMBIE_INDICATOR_SECTORS, index))
+    local index = math.floor(normalized * sectorCount) + 1
+    return math.max(1, math.min(sectorCount, index))
+end
+
+local function sprinterSectorIndex(directionAngleValue, sectorCount)
+    local sectorWidth = math.pi * 2 / sectorCount
+    local normalized = ((directionAngleValue + math.pi + sectorWidth * 0.5) % (math.pi * 2))
+        / (math.pi * 2)
+    local index = math.floor(normalized * sectorCount) + 1
+    return math.max(1, math.min(sectorCount, index))
 end
 
 local function normalizeStance(value)
@@ -2414,6 +2488,10 @@ local function scanNearbyThreats()
     local sprinterRange = warnSprinters and sprinterWarningRange() or 0
     local sprinterRangeSquared = sprinterRange * sprinterRange
     sprinterBlinkThreshold = sprinterBlinkDistance()
+    local rearZombieIndicatorLimit = math.max(1, math.min(8,
+        math.floor((tonumber(getOption("MaxRearZombieIndicators", 3)) or 3) + 0.5)))
+    local sprinterIndicatorLimit = math.max(1, math.min(8,
+        math.floor((tonumber(getOption("MaxSprinterIndicators", 1)) or 1) + 0.5)))
     local sprinterAlarmRange = warnSprinterAlarm and sprinterAlarmDistance() or 0
     local sprinterAlarmRangeSquared = sprinterAlarmRange * sprinterAlarmRange
     local rearAngle = rearZombieWarningAngle()
@@ -2446,6 +2524,7 @@ local function scanNearbyThreats()
     local sprinters = 0
     local nearestSprinter = sprinterRangeSquared
     local nearestSprinterDirectionAngle
+    local sprinterIndicatorsBySector = {}
     for index = 0, list:size() - 1 do
         local shell = list:get(index)
         if shell ~= nil and not shell:isDead() then
@@ -2512,7 +2591,9 @@ local function scanNearbyThreats()
                 if rearCandidate and not sprinterCandidate and uid == nil then
                     rearZombies = rearZombies + 1
                     local rearDirectionAngle = directionAngle(dx, dy, arrowForwardX, arrowForwardY)
-                    local sectorIndex = rearZombieSectorIndex(rearDirectionAngle, rearAngle)
+                    local sectorIndex = rearZombieSectorIndex(
+                        rearDirectionAngle, rearAngle, rearZombieIndicatorLimit
+                    )
                     local sector = rearZombieIndicatorsBySector[sectorIndex]
                     if not sector then
                         sector = { count = 0, nearestDistance = distanceSquared }
@@ -2531,9 +2612,25 @@ local function scanNearbyThreats()
 
                 if sprinterCandidate and uid == nil then
                     sprinters = sprinters + 1
+                    local sprinterDirectionAngle = directionAngle(
+                        dx, dy, arrowForwardX, arrowForwardY
+                    )
                     if sprinters == 1 or distanceSquared < nearestSprinter then
                         nearestSprinter = distanceSquared
-                        nearestSprinterDirectionAngle = directionAngle(dx, dy, arrowForwardX, arrowForwardY)
+                        nearestSprinterDirectionAngle = sprinterDirectionAngle
+                    end
+                    local sectorIndex = sprinterSectorIndex(
+                        sprinterDirectionAngle, sprinterIndicatorLimit
+                    )
+                    local sector = sprinterIndicatorsBySector[sectorIndex]
+                    if not sector then
+                        sector = { count = 0, nearestDistance = math.huge }
+                        sprinterIndicatorsBySector[sectorIndex] = sector
+                    end
+                    sector.count = sector.count + 1
+                    if distanceSquared < sector.nearestDistance then
+                        sector.nearestDistance = distanceSquared
+                        sector.directionAngle = sprinterDirectionAngle
                     end
                 end
                 if sprinterAlarmCandidate and uid == nil then
@@ -2599,7 +2696,7 @@ local function scanNearbyThreats()
             distance = math.sqrt(nearestRearZombie),
             directionAngle = nearestRearZombieDirectionAngle,
         }
-        for sectorIndex = 1, REAR_ZOMBIE_INDICATOR_SECTORS do
+        for sectorIndex = 1, rearZombieIndicatorLimit do
             local sector = rearZombieIndicatorsBySector[sectorIndex]
             if sector then
                 rearZombieIndicators[#rearZombieIndicators + 1] = {
@@ -2621,7 +2718,21 @@ local function scanNearbyThreats()
             directionAngle = nearestSprinterDirectionAngle,
             colour = sprinterWarningColour(math.sqrt(nearestSprinter), sprinterRange),
             indicatorColour = sprinterIndicatorColour(math.sqrt(nearestSprinter), sprinterRange),
+            indicators = {},
         }
+        for sectorIndex = 1, sprinterIndicatorLimit do
+            local sector = sprinterIndicatorsBySector[sectorIndex]
+            if sector then
+                local distance = math.sqrt(sector.nearestDistance)
+                sprinterWarning.indicators[#sprinterWarning.indicators + 1] = {
+                    sectorIndex = sectorIndex,
+                    count = sector.count,
+                    distance = distance,
+                    directionAngle = sector.directionAngle,
+                    indicatorColour = sprinterIndicatorColour(distance, sprinterRange),
+                }
+            end
+        end
     end
 end
 
@@ -2867,7 +2978,8 @@ local function drawWarning()
             end
             local sprinterAlert = sprinterWarning
             if radialRear and sprinterWarning then
-                drawSprinterIndicator(sprinterWarning, screenWidth, screenHeight)
+                drawRearZombieIndicators(sprinterWarning.indicators, screenWidth, screenHeight,
+                    "sprinter", sprinterBlinkThreshold, 1.2)
                 if displayMode == ALERT_DISPLAY_MODE_CLASSIC_HUD then
                     sprinterAlert = nil
                 end
