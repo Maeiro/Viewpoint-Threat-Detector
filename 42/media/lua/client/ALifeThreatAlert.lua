@@ -13,6 +13,7 @@ local DEFAULT_SPRINTER_ALARM_DISTANCE = 20
 local DEFAULT_SPRINTER_BLINK_DISTANCE = 3
 local DEFAULT_REAR_ZOMBIE_ANGLE = 180
 local DEFAULT_REAR_ZOMBIE_BLINK_DISTANCE = 1.5
+local DEFAULT_RADIAL_INDICATOR_FAR_OPACITY = 35
 local DEFAULT_ALARM_VOLUME = 150
 local MAX_ALARM_VOLUME = 200
 local MIN_RANGE = 5
@@ -98,6 +99,7 @@ local typeIconTextureCache = {}
 local neatPanelTextureCache = {}
 local rearZombieIndicatorTextureCache = {}
 local rearZombieIndicatorTextureRetryAt = {}
+local radialIndicatorOpacity
 local TYPE_ICON_TEXTURES = {
     alife = "media/ui/ThreatAlert/alife.png",
     firearm = "media/textures/Item_HandGun3",
@@ -251,6 +253,21 @@ if PZAPI and PZAPI.ModOptions then
         25,
         100,
         "Adjusts the arc width, line thickness, and arrow size without changing the circle radius."
+    )
+    modOptions:addTickBox(
+        "FadeRadialIndicatorsByDistance",
+        "Fade indicators as threats get farther away",
+        true,
+        "Radial indicators are fully opaque nearby and fade with distance. Applies to zombies and sprinters."
+    )
+    modOptions:addSlider(
+        "RadialIndicatorFarOpacity",
+        "Opacity at detection range edge (%)",
+        0,
+        100,
+        5,
+        DEFAULT_RADIAL_INDICATOR_FAR_OPACITY,
+        "Sets the opacity at maximum detection range. Nearby indicators stay fully opaque; 100 disables the fade."
     )
     modOptions:addColorPicker(
         "RearZombieIndicatorNearColour",
@@ -925,11 +942,13 @@ local function drawRearZombieIndicator(anchorX, anchorY, indicator, radius, key,
     local angle = smoothArrowAngle(key, indicator.directionAngle)
     local rotation = math.deg(angle) - 180
     local localCenter = canvasRadius
-    local alpha = 1
+    local alpha = radialIndicatorOpacity(indicator.distance, indicator.activeRange)
     local colour = displayColour or indicator.colour
     if indicator.distance <= (blinkThreshold or rearZombieBlinkThreshold) then
         local timestamp = tonumber(getTimestampMs and getTimestampMs() or 0) or 0
-        alpha = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(timestamp / 1000 * math.pi * 4))
+        local pulseAlpha = 0.25 + 0.75
+            * (0.5 + 0.5 * math.sin(timestamp / 1000 * math.pi * 4))
+        alpha = alpha * pulseAlpha
     end
     local ok = pcall(function()
         layer.javaObject:DrawTextureAngle(texture, localCenter, localCenter, rotation,
@@ -1269,6 +1288,22 @@ local function distanceGradientColour(nearColour, farColour, distance, activeRan
         farColour[2] + (nearColour[2] - farColour[2]) * smoothProximity,
         farColour[3] + (nearColour[3] - farColour[3]) * smoothProximity,
     }
+end
+
+radialIndicatorOpacity = function(distance, activeRange)
+    activeRange = tonumber(activeRange) or 0
+    distance = tonumber(distance) or activeRange
+    if not getOption("FadeRadialIndicatorsByDistance", true) or activeRange <= 0 then
+        return 1
+    end
+    local farOpacity = tonumber(getOption(
+        "RadialIndicatorFarOpacity", DEFAULT_RADIAL_INDICATOR_FAR_OPACITY
+    ))
+    if not farOpacity then farOpacity = DEFAULT_RADIAL_INDICATOR_FAR_OPACITY end
+    farOpacity = math.max(0, math.min(100, farOpacity)) / 100
+    local normalizedDistance = math.max(0, math.min(1, distance / activeRange))
+    local smoothDistance = normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance)
+    return 1 - (1 - farOpacity) * smoothDistance
 end
 
 local function configuredIndicatorColour(optionId, fallback)
@@ -2070,12 +2105,14 @@ local function drawAlertPreview()
                 {
                     count = 2,
                     distance = 4,
+                    activeRange = 20,
                     directionAngle = math.rad(-38),
                     colour = rearZombieIndicatorColour(0, 20),
                 },
                 {
                     count = 1,
                     distance = 14,
+                    activeRange = 20,
                     directionAngle = math.rad(34),
                     colour = rearZombieIndicatorColour(20, 20),
                 },
@@ -2088,6 +2125,7 @@ local function drawAlertPreview()
                         sectorIndex = 1,
                         count = 1,
                         distance = 12,
+                        activeRange = 20,
                         directionAngle = math.rad(54),
                         indicatorColour = sprinterIndicatorColour(12, 20),
                     },
@@ -2488,6 +2526,7 @@ local function scanNearbyThreats()
                     sectorIndex = sectorIndex,
                     count = sector.count,
                     distance = math.sqrt(sector.nearestDistance),
+                    activeRange = rearRange,
                     directionAngle = sector.directionAngle,
                     colour = rearZombieIndicatorColour(
                         math.sqrt(sector.nearestDistance), rearRange
@@ -2508,6 +2547,7 @@ local function scanNearbyThreats()
                     sectorIndex = sectorIndex,
                     count = sector.count,
                     distance = distance,
+                    activeRange = sprinterRange,
                     directionAngle = sector.directionAngle,
                     indicatorColour = sprinterIndicatorColour(distance, sprinterRange),
                 }
