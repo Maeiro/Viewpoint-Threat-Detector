@@ -118,6 +118,15 @@ local TYPE_ICON_TEXTURES = {
 local NEAT_PANEL_HEADER_TEXTURE = "media/ui/NeatUI/DefaultPanel/MainTitle_BG.png"
 local NEAT_PANEL_BODY_TEXTURE = "media/ui/NeatUI/DefaultPanel/MainPanelBG_FlatTop.png"
 
+local function isTextureDrawable(texture)
+    local readyOk, ready = pcall(function() return texture:isReady() end)
+    local failureOk, failed = pcall(function() return texture:isFailure() end)
+    local validOk, valid = pcall(function() return texture:isValid() end)
+    return (not readyOk or ready == true)
+        and (not failureOk or failed ~= true)
+        and (not validOk or valid == true)
+end
+
 local modOptions
 local getOption
 local playAlarmSound
@@ -914,13 +923,13 @@ local function rearZombieIndicatorTexture(radius, size)
         end
         return getTexture(path)
     end)
+    local errorTexture
+    if Texture and type(Texture.getErrorTexture) == "function" then
+        local errorOk, candidate = pcall(Texture.getErrorTexture)
+        errorTexture = errorOk and candidate or nil
+    end
     if ok and loaded then
-        local errorTexture
-        if Texture and type(Texture.getErrorTexture) == "function" then
-            local errorOk, candidate = pcall(Texture.getErrorTexture)
-            errorTexture = errorOk and candidate or nil
-        end
-        if loaded ~= errorTexture then
+        if loaded ~= errorTexture and isTextureDrawable(loaded) then
             rearZombieIndicatorTextureCache[path] = loaded
             rearZombieIndicatorTextureRetryAt[path] = nil
             return loaded
@@ -1681,13 +1690,13 @@ local function typeIconTexture(kind)
         end
         return getTexture(texturePath)
     end)
+    local errorTexture
+    if Texture and type(Texture.getErrorTexture) == "function" then
+        local errorOk, candidate = pcall(Texture.getErrorTexture)
+        errorTexture = errorOk and candidate or nil
+    end
     if ok and loaded then
-        local errorTexture
-        if Texture and type(Texture.getErrorTexture) == "function" then
-            local errorOk, candidate = pcall(Texture.getErrorTexture)
-            errorTexture = errorOk and candidate or nil
-        end
-        if loaded ~= errorTexture then
+        if loaded ~= errorTexture and isTextureDrawable(loaded) then
             typeIconTextureCache[texturePath] = loaded
             typeIconTextureRetryAt[texturePath] = nil
             return loaded
