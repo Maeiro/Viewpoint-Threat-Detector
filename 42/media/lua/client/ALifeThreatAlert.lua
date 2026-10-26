@@ -28,6 +28,9 @@ local MIN_REAR_ZOMBIE_ANGLE = 30
 local MAX_REAR_ZOMBIE_ANGLE = 360
 local REAR_ZOMBIE_ANGLE_STEP = 5
 local REAR_ZOMBIE_INDICATOR_SECTORS = 3
+local MIN_RADIAL_INDICATOR_ASSET_RADIUS = 96
+local MAX_RADIAL_INDICATOR_ASSET_RADIUS = 320
+local RADIAL_INDICATOR_ASSET_RADIUS_STEP = 16
 local ALERT_DISPLAY_MODE_COMPACT_NEATUI = 1
 local ALERT_DISPLAY_MODE_FULL_NEATUI = 2
 local ALERT_DISPLAY_MODE_CLASSIC_HUD = 3
@@ -92,11 +95,6 @@ local SPRINTER_NEAR_COLOUR = { 1, 0, 1 }
 local REAR_ZOMBIE_INDICATOR_RED = { 1, 48 / 255, 48 / 255 }
 local REAR_ZOMBIE_INDICATOR_YELLOW = { 1, 0.82, 0.12 }
 local REAR_ZOMBIE_INDICATOR_RADII = { 128, 176, 224 }
-local REAR_ZOMBIE_INDICATOR_TEXTURES = {
-    [128] = "media/ui/ThreatAlert/rear_zombie_indicator_white_128.png",
-    [176] = "media/ui/ThreatAlert/rear_zombie_indicator_white_176.png",
-    [224] = "media/ui/ThreatAlert/rear_zombie_indicator_white_224.png",
-}
 local SHADOW_OFFSETS = { {-1, 0}, {1, 0}, {0, -1}, {0, 1} }
 local typeIconTextureCache = {}
 local neatPanelTextureCache = {}
@@ -111,6 +109,7 @@ local NEAT_PANEL_HEADER_TEXTURE = "media/ui/NeatUI/DefaultPanel/MainTitle_BG.png
 local NEAT_PANEL_BODY_TEXTURE = "media/ui/NeatUI/DefaultPanel/MainPanelBG_FlatTop.png"
 
 local modOptions
+local getOption
 local playAlarmSound
 local beginAlertPreview
 local activeAlertPreview
@@ -222,6 +221,52 @@ if PZAPI and PZAPI.ModOptions then
     )
     rearZombieDisplayOption:addItem("DayZ-style radial indicators", true)
     rearZombieDisplayOption:addItem("Classic alert card", false)
+
+    modOptions:addTitle("Radial Indicator Appearance")
+    modOptions:addSlider(
+        "RadialIndicatorRadius",
+        "Radial circle radius (100 = default)",
+        75,
+        150,
+        5,
+        100,
+        "Scales the indicators' distance from the center of the screen. 100 keeps the current screen-adaptive radius."
+    )
+    modOptions:addSlider(
+        "RadialIndicatorSize",
+        "Radial indicator size",
+        75,
+        125,
+        25,
+        100,
+        "Adjusts the arc width, line thickness, and arrow size without changing the circle radius."
+    )
+    modOptions:addColorPicker(
+        "RearZombieIndicatorNearColour",
+        "Zombie indicator color at close range",
+        REAR_ZOMBIE_INDICATOR_RED[1], REAR_ZOMBIE_INDICATOR_RED[2],
+        REAR_ZOMBIE_INDICATOR_RED[3], 1,
+        "The radial zombie indicator smoothly blends from this color to its far-range color."
+    )
+    modOptions:addColorPicker(
+        "RearZombieIndicatorFarColour",
+        "Zombie indicator color at far range",
+        REAR_ZOMBIE_INDICATOR_YELLOW[1], REAR_ZOMBIE_INDICATOR_YELLOW[2],
+        REAR_ZOMBIE_INDICATOR_YELLOW[3], 1,
+        "The radial zombie indicator smoothly blends from its close-range color to this color."
+    )
+    modOptions:addColorPicker(
+        "SprinterIndicatorNearColour",
+        "Sprinter indicator color at close range",
+        SPRINTER_NEAR_COLOUR[1], SPRINTER_NEAR_COLOUR[2], SPRINTER_NEAR_COLOUR[3], 1,
+        "The radial sprinter indicator smoothly blends from this color to its far-range color."
+    )
+    modOptions:addColorPicker(
+        "SprinterIndicatorFarColour",
+        "Sprinter indicator color at far range",
+        SPRINTER_COLOUR[1], SPRINTER_COLOUR[2], SPRINTER_COLOUR[3], 1,
+        "The radial sprinter indicator smoothly blends from its close-range color to this color."
+    )
 
     modOptions:addTitle("Sprinter Threats")
     modOptions:addTickBox(
@@ -747,7 +792,7 @@ local function drawDirectionArrow(centerX, centerY, angle, colour, size, key)
     drawTriangle(size, colour[1], colour[2], colour[3], 1)
 end
 
-local function rearZombieIndicatorAssetRadius(screenHeight)
+local function rearZombieIndicatorBaseRadius(screenHeight)
     local desiredRadius = math.max(128, math.min(224, screenHeight * 0.16))
     local closestRadius = REAR_ZOMBIE_INDICATOR_RADII[1]
     for _, radius in ipairs(REAR_ZOMBIE_INDICATOR_RADII) do
@@ -758,9 +803,30 @@ local function rearZombieIndicatorAssetRadius(screenHeight)
     return closestRadius
 end
 
-local function rearZombieIndicatorTexture(radius)
-    local path = REAR_ZOMBIE_INDICATOR_TEXTURES[radius]
-    if not path then return nil end
+local function rearZombieIndicatorAssetRadius(screenHeight)
+    local radiusScale = tonumber(getOption("RadialIndicatorRadius", 100)) or 100
+    radiusScale = math.max(75, math.min(150, radiusScale))
+    local desiredRadius = rearZombieIndicatorBaseRadius(screenHeight) * radiusScale / 100
+    local closestRadius = MIN_RADIAL_INDICATOR_ASSET_RADIUS
+    for radius = MIN_RADIAL_INDICATOR_ASSET_RADIUS, MAX_RADIAL_INDICATOR_ASSET_RADIUS,
+            RADIAL_INDICATOR_ASSET_RADIUS_STEP do
+        if math.abs(radius - desiredRadius) < math.abs(closestRadius - desiredRadius) then
+            closestRadius = radius
+        end
+    end
+    return closestRadius
+end
+
+local function rearZombieIndicatorAssetSize()
+    local size = tonumber(getOption("RadialIndicatorSize", 100)) or 100
+    if size < 88 then return 75 end
+    if size > 112 then return 125 end
+    return 100
+end
+
+local function rearZombieIndicatorTexture(radius, size)
+    local path = "media/ui/ThreatAlert/rear_zombie_indicator_white_"
+        .. tostring(radius) .. "_" .. tostring(size) .. ".png"
     if type(getTexture) ~= "function"
             and (not Texture or type(Texture.trygetTexture) ~= "function") then
         return nil
@@ -798,11 +864,12 @@ local function rearZombieIndicatorTexture(radius)
     return nil
 end
 
-local function drawRearZombieIndicator(anchorX, anchorY, indicator, radius, key, blinkThreshold, sizeScale)
-    local texture = rearZombieIndicatorTexture(radius)
+local function drawRearZombieIndicator(anchorX, anchorY, indicator, radius, key, blinkThreshold, sizeScale, displayColour)
+    local iconSize = rearZombieIndicatorAssetSize()
+    local texture = rearZombieIndicatorTexture(radius, iconSize)
     if not texture then return false end
 
-    local canvasRadius = math.floor((radius + 16) * (sizeScale or 1))
+    local canvasRadius = math.floor((radius + 16 * iconSize / 100) * (sizeScale or 1))
     local layerX = math.floor(anchorX - canvasRadius)
     local layerY = math.floor(anchorY - canvasRadius)
     local layerIndex = arrowLayerCounts[currentArrowLayerPass] + 1
@@ -820,13 +887,14 @@ local function drawRearZombieIndicator(anchorX, anchorY, indicator, radius, key,
     local rotation = math.deg(angle) - 180
     local localCenter = canvasRadius
     local alpha = 1
+    local colour = displayColour or indicator.colour
     if indicator.distance <= (blinkThreshold or rearZombieBlinkThreshold) then
         local timestamp = tonumber(getTimestampMs and getTimestampMs() or 0) or 0
         alpha = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(timestamp / 1000 * math.pi * 4))
     end
     local ok = pcall(function()
         layer.javaObject:DrawTextureAngle(texture, localCenter, localCenter, rotation,
-            indicator.colour[1], indicator.colour[2], indicator.colour[3], alpha)
+            colour[1], colour[2], colour[3], alpha)
     end)
     if not ok then
         ok = pcall(function()
@@ -847,7 +915,7 @@ local function drawSprinterIndicator(indicator, screenWidth, screenHeight)
     local anchorY = screenHeight * 0.5
     local radius = rearZombieIndicatorAssetRadius(screenHeight)
     return drawRearZombieIndicator(anchorX, anchorY, indicator, radius,
-        "sprinter", sprinterBlinkThreshold, 1.2)
+        "sprinter", sprinterBlinkThreshold, 1.2, indicator.indicatorColour)
 end
 
 local function drawRearZombieIndicators(indicators, screenWidth, screenHeight)
@@ -998,7 +1066,7 @@ if Events and Events.OnGameStart then
     end)
 end
 
-local function getOption(name, fallback)
+getOption = function(name, fallback)
     if not PZAPI or not PZAPI.ModOptions then return fallback end
     local ok, value = pcall(function()
         local currentOptions = PZAPI.ModOptions:getOptions(MOD_ID) or modOptions
@@ -1205,15 +1273,41 @@ local function distanceGradientColour(nearColour, farColour, distance, activeRan
     }
 end
 
+local function configuredIndicatorColour(optionId, fallback)
+    local colour = getOption(optionId)
+    if type(colour) ~= "table" then return fallback end
+    local red = tonumber(colour.r)
+    local green = tonumber(colour.g)
+    local blue = tonumber(colour.b)
+    if not red or not green or not blue then return fallback end
+    return {
+        math.max(0, math.min(1, red)),
+        math.max(0, math.min(1, green)),
+        math.max(0, math.min(1, blue)),
+    }
+end
+
 local function rearZombieIndicatorColour(distance, activeRange)
     return distanceGradientColour(
-        REAR_ZOMBIE_INDICATOR_RED, REAR_ZOMBIE_INDICATOR_YELLOW, distance, activeRange
+        configuredIndicatorColour("RearZombieIndicatorNearColour", REAR_ZOMBIE_INDICATOR_RED),
+        configuredIndicatorColour("RearZombieIndicatorFarColour", REAR_ZOMBIE_INDICATOR_YELLOW),
+        distance,
+        activeRange
     )
 end
 
 local function sprinterWarningColour(distance, activeRange)
     return distanceGradientColour(
         SPRINTER_NEAR_COLOUR, SPRINTER_COLOUR, distance, activeRange
+    )
+end
+
+local function sprinterIndicatorColour(distance, activeRange)
+    return distanceGradientColour(
+        configuredIndicatorColour("SprinterIndicatorNearColour", SPRINTER_NEAR_COLOUR),
+        configuredIndicatorColour("SprinterIndicatorFarColour", SPRINTER_COLOUR),
+        distance,
+        activeRange
     )
 end
 
@@ -2095,13 +2189,13 @@ local function drawAlertPreview()
                         count = 2,
                         distance = 4,
                         directionAngle = math.rad(-38),
-                        colour = REAR_ZOMBIE_INDICATOR_RED,
+                        colour = rearZombieIndicatorColour(0, 20),
                     },
                     {
                         count = 1,
                         distance = 14,
                         directionAngle = math.rad(34),
-                        colour = REAR_ZOMBIE_INDICATOR_YELLOW,
+                        colour = rearZombieIndicatorColour(20, 20),
                     },
                 }
             end
@@ -2112,6 +2206,7 @@ local function drawAlertPreview()
                 distance = 12,
                 directionAngle = math.rad(54),
                 colour = sprinterWarningColour(12, 20),
+                indicatorColour = sprinterIndicatorColour(12, 20),
             }
         end
 
@@ -2525,6 +2620,7 @@ local function scanNearbyThreats()
             distance = math.sqrt(nearestSprinter),
             directionAngle = nearestSprinterDirectionAngle,
             colour = sprinterWarningColour(math.sqrt(nearestSprinter), sprinterRange),
+            indicatorColour = sprinterIndicatorColour(math.sqrt(nearestSprinter), sprinterRange),
         }
     end
 end

@@ -47,8 +47,12 @@ function New-Svg([int]$radius, [string]$colour, [string]$path) {
     [IO.File]::WriteAllText($path, $svg.Trim() + [Environment]::NewLine, [Text.Encoding]::UTF8)
 }
 
-function New-Png([int]$radius, [string]$colour, [string]$path) {
-    $canvasRadius = $radius + 16
+function New-Png([int]$radius, [string]$colour, [string]$path, [double]$iconScale = 1) {
+    $arcDegrees = 18 * $iconScale
+    $strokeWidth = 5.25 * $iconScale
+    $arrowLength = 12 * $iconScale
+    $arrowHalfWidth = 6 * $iconScale
+    $canvasRadius = $radius + [int][Math]::Ceiling(16 * $iconScale)
     $size = $canvasRadius * 2
     $bitmap = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -139,6 +143,14 @@ foreach ($radius in $radii) {
     foreach ($name in $colours.Keys) {
         $colour = $colours[$name]
         New-Png $radius $colour (Join-Path $OutputDirectory "rear_zombie_indicator_${name}_$radius.png")
+    }
+}
+
+for ($radius = 96; $radius -le 320; $radius += 16) {
+    foreach ($iconSize in @(75, 100, 125)) {
+        $iconScale = $iconSize / 100.0
+        $path = Join-Path $OutputDirectory "rear_zombie_indicator_white_${radius}_${iconSize}.png"
+        New-Png $radius $colours.white $path $iconScale
     }
 }
 
