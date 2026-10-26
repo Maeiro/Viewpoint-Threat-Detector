@@ -194,7 +194,7 @@ if PZAPI and PZAPI.ModOptions then
         "RearZombieRequireLineOfSight",
         "Require a clear path to rear zombies",
         true,
-        "When enabled, walls and closed doors block rear zombie warnings."
+        "When enabled, walls and closed doors block rear zombie warnings; low climbable fences do not."
     )
     modOptions:addTickBox(
         "IgnoreFallenZombies",
@@ -353,7 +353,7 @@ if PZAPI and PZAPI.ModOptions then
         "SprinterRequireLineOfSight",
         "Require a clear path to sprinters",
         true,
-        "When enabled, walls and closed doors block sprinter warnings."
+        "When enabled, walls and closed doors block sprinter warnings; low climbable fences do not."
     )
     modOptions:addTickBox(
         "SprinterIgnoreFallen",
@@ -2357,6 +2357,16 @@ local function alertPreviewIsActive()
 end
 
 local function isBlockedBetweenSquares(firstSquare, secondSquare)
+    if firstSquare:getZ() == secondSquare:getZ() then
+        if firstSquare:getX() < secondSquare:getX()
+                and secondSquare:has(IsoFlagType.HoppableW) then return false end
+        if firstSquare:getX() > secondSquare:getX()
+                and firstSquare:has(IsoFlagType.HoppableW) then return false end
+        if firstSquare:getY() < secondSquare:getY()
+                and secondSquare:has(IsoFlagType.HoppableN) then return false end
+        if firstSquare:getY() > secondSquare:getY()
+                and firstSquare:has(IsoFlagType.HoppableN) then return false end
+    end
     return firstSquare:isBlockedTo(secondSquare) or secondSquare:isBlockedTo(firstSquare)
 end
 
