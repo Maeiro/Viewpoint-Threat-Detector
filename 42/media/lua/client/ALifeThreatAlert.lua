@@ -2337,6 +2337,22 @@ local function passesRearZombieVisibilityFilters(zombie, playerSquare, cell, sam
     return ok and passes
 end
 
+local function isStayWithMeCompanion(zombie)
+    local stayWithMe = rawget(_G, "Bridge")
+    if type(stayWithMe) == "table" then
+        if stayWithMe.body == zombie then return true end
+        if type(stayWithMe.isCompanion) == "function" then
+            local ok, isCompanion = pcall(stayWithMe.isCompanion, zombie)
+            if ok and isCompanion == true then return true end
+        end
+    end
+
+    local ok, isCompanion = pcall(function()
+        return zombie:getVariableBoolean("NotAloneBody") == true
+    end)
+    return ok and isCompanion == true
+end
+
 local function scanNearbyThreats()
     warnings = {}
     rearZombieWarning = nil
@@ -2448,6 +2464,7 @@ local function scanNearbyThreats()
             local nearbyFloor = math.abs(z - pz) <= 1
                 or ((warnSprinters or warnSprinterAlarm) and not sprinterSameFloorOnly)
             if nearbyFloor and distanceSquared <= scanRangeSquared then
+                local excluded = isStayWithMeCompanion(shell)
                 local rearCandidate = false
                 if warnRearZombies and distanceSquared <= rearRangeSquared then
                     local fallen = false
@@ -2503,7 +2520,7 @@ local function scanNearbyThreats()
                     uid = uidOf(project, shell)
                 end
 
-                if rearCandidate and not sprinterCandidate and uid == nil then
+                if not excluded and rearCandidate and not sprinterCandidate and uid == nil then
                     rearZombies = rearZombies + 1
                     local rearDirectionAngle = directionAngle(dx, dy, arrowForwardX, arrowForwardY)
                     local sectorIndex = rearZombieSectorIndex(
@@ -2521,7 +2538,7 @@ local function scanNearbyThreats()
                     end
                 end
 
-                if sprinterCandidate and uid == nil then
+                if not excluded and sprinterCandidate and uid == nil then
                     sprinters = sprinters + 1
                     local sprinterDirectionAngle = directionAngle(
                         dx, dy, arrowForwardX, arrowForwardY
@@ -2540,11 +2557,11 @@ local function scanNearbyThreats()
                         sector.directionAngle = sprinterDirectionAngle
                     end
                 end
-                if sprinterAlarmCandidate and uid == nil then
+                if not excluded and sprinterAlarmCandidate and uid == nil then
                     sprinterAlarmZombieIDs[zombieAlertId(shell)] = true
                 end
 
-                if alifeCandidate and uid ~= nil then
+                if not excluded and alifeCandidate and uid ~= nil then
                     local record = actorFor(project, uid)
                     if record then
                         local stance = stanceOf(project, record, player)
