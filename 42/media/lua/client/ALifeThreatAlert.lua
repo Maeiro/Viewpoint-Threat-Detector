@@ -761,6 +761,30 @@ function AlertArrowLayer:new()
     return ISUIElement.new(self, 0, 0, 1, 1)
 end
 
+function AlertArrowLayer:onMouseDown(x, y)
+    return false
+end
+
+function AlertArrowLayer:onMouseUp(x, y)
+    return false
+end
+
+function AlertArrowLayer:onRightMouseDown(x, y)
+    return false
+end
+
+function AlertArrowLayer:onRightMouseUp(x, y)
+    return false
+end
+
+function AlertArrowLayer:onMouseMove(dx, dy)
+    return false
+end
+
+function AlertArrowLayer:onMouseWheel(del)
+    return false
+end
+
 local alertArrowLayers = { live = {}, preview = {} }
 local arrowLayerCounts = { live = 0, preview = 0 }
 local currentArrowLayerPass = "live"
@@ -2432,7 +2456,7 @@ local function scanNearbyThreats()
                         fallen = ok and onFloor == true
                     end
                     if not fallen then
-                        local forwardDot = dx * forwardX + dy * forwardY
+                        local forwardDot = dx * arrowForwardX + dy * arrowForwardY
                         rearCandidate = -forwardDot >= math.sqrt(distanceSquared) * rearAngleCos
                             and passesRearZombieVisibilityFilters(
                                 shell,
