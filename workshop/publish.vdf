@@ -1,0 +1,110 @@
+"workshopitem"
+{
+	"appid"		"108600"
+	"publishedfileid"	"3812396995"
+	"contentfolder"	"D:\\SteamCMD\\workshop\\ViewpointThreatDetector\\content"
+	"previewfile"	"C:\\PZMods\\Viewpoint Threat Detector\\preview.gif"
+	"visibility"	"0"
+	"title"	"Viewpoint Threat Detector"
+	"description"	"[h1]Viewpoint Threat Detector[/h1]
+Improve situational awareness in Project Zomboid, especially when playing with Project Viewpoint's limited field of view.
+Detect nearby A-Life NPCs, approaching zombies, and dangerous sprinters through customizable visual alerts, directional indicators, and warning sounds.
+
+[h2]A-Life NPC Detection[/h2]
+[h3]Stance and Threat Detection[/h3]
+[list]
+[*]Choose which NPC stances trigger alerts: Hostile, Careful, Neutral, Friendly, and Allied.
+[*]When multiple stances are detected, alerts prioritize Hostile, Careful, Neutral, Friendly, then Allied.
+[*]Each stance has its own alert color for easier identification.
+[*]Alerts can display distance, directional indicators, and NPC faction information.
+[*]Optionally identify nearby A-Life NPCs carrying firearms.
+[*]Unknown factions follow A-Life's default Hostile stance.
+[*]With Project A-Life Jimmy, the player's own people and allied standing are recognized as Allied.
+[/list]
+[h3]Close Hostile Warnings[/h3]
+[list]
+[*]Optional proximity alarm when a Hostile A-Life NPC gets close.
+[*]Configure its detection distance, warning sound, and volume independently.
+[/list]
+
+[h2]Zombie Detection[/h2]
+[h3]Rear Zombie Alerts[/h3]
+[list]
+[*]Detect regular zombies approaching from behind, with directional indicators pointing toward the nearest threat.
+[*]Balanced rear detection is enabled by default: 3.5 tiles normally and 6.5 tiles with the Keen Hearing trait.
+[*]Alternatively, configure a custom detection range and angle.
+[*]Optional same-floor, line-of-sight, and fallen-zombie filters.
+[*]Customizable warning sound and volume.
+[/list]
+[h3]Sprinter Alerts[/h3]
+[list]
+[*]Dedicated warnings for nearby sprinters, separate from regular zombie detection.
+[*]Independent detection distance and alarm range.
+[*]Configure same-floor and line-of-sight checks.
+[*]Optionally ignore fallen sprinters.
+[*]Independent warning sound and volume.
+[/list]
+
+[h2]Customizable Warning Sounds[/h2]
+[list]
+[*]Configure independent sounds and volume levels for regular rear-zombie alerts, close Hostile A-Life NPCs, and sprinters.
+[*]Choose from built-in sounds, including heartbeat, radar and sonar pings, soft beeps, short alarms, and additional audio cues.
+[*]Default sounds: heartbeat for regular zombies, radar ping for close Hostile NPCs, and sonar ping for sprinters.
+[*]Preview selected sounds in-game using a configurable preview key, with the same playback behavior as real alerts. The key is unassigned by default to avoid conflicts with gameplay controls.
+[*]Regular alarm sounds apply to zombie alerts by default; Hostile NPC and sprinter alarms are controlled separately.
+[/list]
+
+[h2]HUD and Visual Customization[/h2]
+[h3]Display Modes[/h3]
+[list]
+[*]Choose Compact NeatUI, Full NeatUI, or Vanilla Mode for A-Life alert cards. Full NeatUI is selected by default; zombie and sprinter tracking always uses DayZ-style radial indicators.
+[*]Full cards can show NPC factions, threat information, distance, and direction.
+[*]Minimal mode emphasizes icons, threat counts, distance, and directional indicators.
+[*]Immersive mode hides all visual alerts while keeping detection and configured warning sounds active.
+[*]A-Life alert cards can be repositioned by dragging them; radial indicators remain centered on the screen.
+[*]Preview sample NPC, rear-zombie, and sprinter alerts directly from Mod Options.
+[/list]
+[h3]Directional Indicators[/h3]
+[list]
+[*]When Viewpoint Compass is active, directional arrows follow the camera heading; otherwise, they follow the character's facing direction.
+[*]Customize the radial circle radius, icon size, distance fade, close/far colors, blink distance, and number of directions shown.
+[*]Sprinters have a separate all-direction radial alert, independent of regular zombie indicators.
+[/list]
+[h3]Interface Compatibility[/h3]
+[list]
+[*]The two NeatUI styles use NeatUI_Framework panel backgrounds when it is installed.
+[*]Falls back to the standard HUD when NeatUI is unavailable.
+[/list]
+
+[h2]Vehicle Alert Behavior[/h2]
+[list]
+[*]Configure alert suppression independently for rear zombies, sprinters, and A-Life NPCs.
+[*]All three alert categories are disabled inside vehicles by default.
+[*]Existing saves automatically migrate the previous vehicle alert setting.
+[/list]
+
+[h2]Requirements and Compatibility[/h2]
+[list]
+[*]Project Zomboid Build 42.20+.
+[*]Project A-Life is required for NPC stance, faction, firearm, and close-hostile detection.
+[*]Rear-zombie and sprinter detection work independently without Project A-Life.
+[*]Viewpoint Compass is optional and enables camera-relative directional indicators and the A-Life marker integration.
+[*]NeatUI_Framework is optional and provides alternative HUD styling.
+[/list]
+
+[h2]Latest features[/h2]
+[list]
+[*]Zombie tracking uses DayZ-style radial indicators only. Circular arcs sit around a screen-centered radius and point toward detected threats.
+[*]Regular rear-zombie indicators blink within a configurable critical distance (1.5 tiles by default); low climbable fences do not block the default line-of-sight check.
+[*]Sprinter indicators cover all directions, transition from magenta to purple with distance, and blink within a configurable distance (4 tiles by default).
+[*]Set rear-zombie and sprinter indicator limits independently from 1 to 8 directions (2 each by default); each direction represents its nearest threat.
+[*]A-Life stance alerts are disabled by default while this alert system is being redesigned. When Viewpoint Compass is installed locally, nearby A-Life NPC positions and stance colors can also appear on its compass; enable the marker option in Compass to activate this bridge.
+[*]Stay With Me companions are excluded from zombie and sprinter detection, including counts, indicators, and warning alarms.
+[*]The optional alert preview can show every A-Life stance and both radial indicator types without nearby threats.
+[*]Rear-zombie detection follows the camera heading when Viewpoint Compass is active, instead of the character's facing direction.
+[/list]
+
+Workshop ID: 3812396995
+Mod ID: 3812396995/ALifeThreatAlert"
+	"changenote"	"1.4.78: Leave the in-game alarm preview key unassigned by default and migrate the old C binding, which conflicted with crouching."
+}

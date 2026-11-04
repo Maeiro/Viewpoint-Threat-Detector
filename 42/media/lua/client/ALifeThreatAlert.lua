@@ -24,7 +24,7 @@ local DEFAULT_CLOSE_HOSTILE_ALARM_VOLUME = 100
 local DEFAULT_SPRINTER_ALARM_VOLUME = 100
 local DEFAULT_MAX_REAR_ZOMBIE_INDICATORS = 2
 local DEFAULT_MAX_SPRINTER_INDICATORS = 2
-local DEFAULT_ALARM_PREVIEW_KEY = Keyboard.KEY_C
+local DEFAULT_ALARM_PREVIEW_KEY = 0
 local MAX_ALARM_VOLUME = 200
 local MIN_RANGE = 5
 local MAX_RANGE = 100
@@ -572,6 +572,7 @@ if modOptions then
 end
 
 local SOUND_MIGRATION_MARKER = "migration|ALifeThreatAlert|siren-removed-v1|1"
+local ALARM_PREVIEW_KEY_MIGRATION_MARKER = "migration|ALifeThreatAlert|alarm-preview-key-unassigned-v1|1"
 local VEHICLE_ALERT_MIGRATION_MARKER = "migration|ALifeThreatAlert|vehicle-alerts-split-v1|1"
 local VEHICLE_ALERT_OPTION_IDS = {
     "DisableZombieAlertsInVehicle",
@@ -592,6 +593,8 @@ local LEGACY_SOUND_DEFAULTS = {
 local function readSavedSoundSelections()
     local selections = {}
     local hasMarker = false
+    local hasPreviewKeyMarker = false
+    local savedPreviewKey
     local ok, reader = pcall(function() return getFileReader("ModOptions.ini", true) end)
     if not ok or not reader then return selections, hasMarker end
 
@@ -599,13 +602,18 @@ local function readSavedSoundSelections()
         local readOk, line = pcall(function() return reader:readLine() end)
         if not readOk or line == nil then break end
         if string.find(line, SOUND_MIGRATION_MARKER, 1, true) then hasMarker = true end
+        if string.find(line, ALARM_PREVIEW_KEY_MIGRATION_MARKER, 1, true) then
+            hasPreviewKeyMarker = true
+        end
         local _, modId, optionId, value = line:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)")
         if modId == MOD_ID and LEGACY_SOUND_DEFAULTS[optionId] then
             selections[optionId] = tonumber(value)
+        elseif modId == MOD_ID and optionId == "AlarmPreviewKey" then
+            savedPreviewKey = tonumber(value)
         end
     end
     pcall(function() reader:close() end)
-    return selections, hasMarker
+    return selections, hasMarker, savedPreviewKey, hasPreviewKeyMarker
 end
 
 local function hasSoundMigrationMarker(lines)
@@ -657,10 +665,11 @@ end
 if PZAPI and PZAPI.ModOptions and not PZAPI.ModOptions._vtdSirenMigrationInstalled then
     local originalLoad = PZAPI.ModOptions.load
     PZAPI.ModOptions.load = function(self, ...)
-        local selections, fileHasMarker = readSavedSoundSelections()
+        local selections, fileHasMarker, savedPreviewKey, fileHasPreviewKeyMarker = readSavedSoundSelections()
         local vehicleSettings, fileHasVehicleMarker = readSavedVehicleAlertSettings()
         local alreadyMigrated = fileHasMarker
             or hasSoundMigrationMarker(PZAPI.ModOptions.OtherOptions)
+        local previewKeyAlreadyMigrated = fileHasPreviewKeyMarker
         local vehicleAlreadyMigrated = fileHasVehicleMarker
             or hasVehicleAlertMigrationMarker(PZAPI.ModOptions.OtherOptions)
         originalLoad(self, ...)
@@ -677,6 +686,15 @@ if PZAPI and PZAPI.ModOptions and not PZAPI.ModOptions._vtdSirenMigrationInstall
 
         if not hasSoundMigrationMarker(PZAPI.ModOptions.OtherOptions) then
             table.insert(PZAPI.ModOptions.OtherOptions, SOUND_MIGRATION_MARKER .. "\r\n")
+        end
+
+        if not previewKeyAlreadyMigrated then
+            local option = modOptions and modOptions:getOption("AlarmPreviewKey")
+            if savedPreviewKey == Keyboard.KEY_C and option then
+                option:setValue(DEFAULT_ALARM_PREVIEW_KEY)
+            end
+            table.insert(PZAPI.ModOptions.OtherOptions,
+                ALARM_PREVIEW_KEY_MIGRATION_MARKER .. "\r\n")
         end
 
         if not vehicleAlreadyMigrated and vehicleSettings.legacyDisable ~= nil then
