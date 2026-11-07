@@ -1,6 +1,6 @@
 name=Viewpoint Threat Detector
 id=3812396995/ALifeThreatAlert
 author=Maeiro
-description=Displays configurable alerts for nearby Project A-Life NPC stances, firearm carriers, sprinters, and zombies approaching from behind, with optional Viewpoint Compass markers.
-modversion=1.4.79
+description=Displays configurable alerts for nearby Project A-Life NPC stances, firearm carriers, sprinters, The Mutants, and zombies approaching from behind, with optional Viewpoint Compass markers.
+modversion=1.4.82
 versionMin=42.20

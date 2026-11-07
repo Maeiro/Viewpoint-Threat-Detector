@@ -12,6 +12,7 @@ local DEFAULT_CLOSE_HOSTILE_RANGE = 10
 local DEFAULT_ALARM_SOUND = 2
 local DEFAULT_CLOSE_HOSTILE_ALARM_SOUND = 1
 local DEFAULT_SPRINTER_ALARM_SOUND = 4
+local DEFAULT_MUTANT_ALARM = { sound = 15, volume = 100 }
 local DEFAULT_REAR_ZOMBIE_RANGE = 20
 local DEFAULT_SPRINTER_RANGE = 20
 local DEFAULT_SPRINTER_ALARM_DISTANCE = 10
@@ -101,6 +102,8 @@ local STANCE_COLOURS = {
 }
 local SPRINTER_COLOUR = { 130 / 255, 0, 129 / 255 }
 local SPRINTER_NEAR_COLOUR = { 1, 0, 1 }
+local MUTANT_NEAR_COLOUR = { 0.45, 1, 0.02 }
+local MUTANT_FAR_COLOUR = { 0.02, 0.28, 0.06 }
 local REAR_ZOMBIE_INDICATOR_RED = { 1, 48 / 255, 48 / 255 }
 local REAR_ZOMBIE_INDICATOR_YELLOW = { 1, 0.82, 0.12 }
 local REAR_ZOMBIE_INDICATOR_RADII = { 128, 176, 224 }
@@ -336,6 +339,66 @@ if PZAPI and PZAPI.ModOptions then
         "Shows up to this many directions around the full compass, with one indicator for the nearest sprinter in each sector."
     )
 
+    modOptions:addTitle("The Mutants")
+    modOptions:addTickBox(
+        "EnableMutantWarning",
+        "Warn about nearby mutants",
+        true,
+        "Requires The Mutants. Displays separate green indicators in all directions, with independent detection and alarm settings."
+    )
+    modOptions:addSlider("MutantWarningDistance", "Mutant warning distance (tiles)",
+        MIN_CLOSE_HOSTILE_RANGE, MAX_RANGE, 1, DEFAULT_SPRINTER_RANGE,
+        "Maximum distance for mutant visual indicators, independent of sprinters and the mutant alarm.")
+    modOptions:addSlider("MutantAlarmDistance", "Mutant alarm distance (tiles)",
+        MIN_CLOSE_HOSTILE_RANGE, MAX_RANGE, 1, DEFAULT_SPRINTER_ALARM_DISTANCE,
+        "Maximum distance for the mutant alarm, independent of its visual warning range.")
+    modOptions:addSlider("MutantBlinkDistance", "Critical mutant blink distance (tiles)",
+        MIN_SPRINTER_BLINK_DISTANCE, MAX_SPRINTER_BLINK_DISTANCE,
+        SPRINTER_BLINK_DISTANCE_STEP, DEFAULT_SPRINTER_BLINK_DISTANCE,
+        "Mutant indicators blink within this distance. Set to 0 to disable blinking.")
+    modOptions:addSlider("MaxMutantIndicators", "Maximum mutant indicators",
+        1, 8, 1, DEFAULT_MAX_SPRINTER_INDICATORS,
+        "Maximum number of mutant directions, with the nearest mutant shown in each sector.")
+    modOptions:addTickBox("MutantSameFloorOnly", "Detect mutants only on the same floor", true,
+        "When enabled, mutants on other floors do not trigger warnings or alarms.")
+    modOptions:addTickBox("MutantRequireLineOfSight", "Require a clear path to mutants", true,
+        "Walls and closed doors block mutant warnings; low climbable fences do not.")
+    modOptions:addTickBox("MutantIgnoreFallen", "Ignore fallen mutants", false,
+        "When enabled, mutants on the ground do not trigger warnings or alarms.")
+    modOptions:addTickBox("DisableMutantAlertsInVehicle", "Disable mutant alerts while inside a vehicle", true,
+        "Suppresses mutant visual warnings and their alarm while you are in a vehicle.")
+    modOptions:addTickBox(
+        "EnableMutantAlarm", "Play an alarm for mutants", true,
+        "Uses the mutant alarm distance, sound and volume configured in this category."
+    )
+    local mutantAlarmSoundOption = modOptions:addComboBox(
+        "MutantAlarmSound", "Mutant alarm sound",
+        "Choose the dedicated mutant alarm cue. Space - Wall is selected by default."
+    )
+    addAlarmSoundOptions(mutantAlarmSoundOption, DEFAULT_MUTANT_ALARM.sound)
+    modOptions:addSlider(
+        "MutantAlarmVolume", "Mutant alarm volume (%%)",
+        0, MAX_ALARM_VOLUME, 10, DEFAULT_MUTANT_ALARM.volume,
+        "Volume multiplier for the mutant alarm."
+    )
+    modOptions:addColorPicker(
+        "MutantIndicatorNearColour",
+        "Mutant indicator color at close range",
+        MUTANT_NEAR_COLOUR[1], MUTANT_NEAR_COLOUR[2], MUTANT_NEAR_COLOUR[3], 1,
+        "The mutant indicator becomes neon green as the mutant approaches."
+    )
+    modOptions:addColorPicker(
+        "MutantIndicatorFarColour",
+        "Mutant indicator color at far range",
+        MUTANT_FAR_COLOUR[1], MUTANT_FAR_COLOUR[2], MUTANT_FAR_COLOUR[3], 1,
+        "The mutant indicator starts dark green at the edge of the detection range."
+    )
+    modOptions:addButton(
+        "PreviewMutantAlert", "Preview mutant radial indicators",
+        "Displays sample mutant indicators without a nearby threat.",
+        onPreviewAlert, nil, "mutant"
+    )
+
     modOptions:addTitle("Sprinter Threats")
     modOptions:addTickBox(
         "EnableSprinterWarning",
@@ -473,7 +536,7 @@ if PZAPI and PZAPI.ModOptions then
         "EnableAlarmSound",
         "Play an alarm sound for new threats",
         true,
-        "Master switch for all alarm sounds, including the separate close Hostile A-Life and sprinter alarms."
+        "Master switch for all alarm sounds, including the separate close Hostile A-Life, sprinter and mutant alarms."
     )
     modOptions:addSlider(
         "AlarmVolume",
@@ -541,6 +604,7 @@ if PZAPI and PZAPI.ModOptions then
     alarmPreviewTypeOption:addItem("Regular alarm", true)
     alarmPreviewTypeOption:addItem("Close Hostile A-Life", false)
     alarmPreviewTypeOption:addItem("Sprinter", false)
+    alarmPreviewTypeOption:addItem("Mutant", false)
     modOptions:addKeyBind(
         "AlarmPreviewKey",
         "Play alarm preview in-game",
@@ -722,6 +786,7 @@ local warnings = {}
 local rearZombieWarning
 local rearZombieIndicators = {}
 local sprinterWarning
+local mutantWarning
 local rearZombieBlinkThreshold = DEFAULT_REAR_ZOMBIE_BLINK_DISTANCE
 local sprinterBlinkThreshold = DEFAULT_SPRINTER_BLINK_DISTANCE
 
@@ -1049,7 +1114,7 @@ local function drawRearZombieIndicators(indicators, screenWidth, screenHeight, k
         drawRearZombieIndicator(anchorX, anchorY, indicator, radius,
             keyPrefix .. "-sector-" .. tostring(indicator.sectorIndex or index),
             blinkThreshold, sizeScale,
-            keyPrefix == "sprinter" and indicator.indicatorColour or nil)
+            indicator.indicatorColour)
     end
 end
 
@@ -1286,16 +1351,24 @@ local function closeHostileAlarmRange()
     return math.max(MIN_CLOSE_HOSTILE_RANGE, math.min(MAX_RANGE, math.floor(value + 0.5)))
 end
 
-local function sprinterWarningRange()
-    local value = tonumber(getOption("SprinterWarningDistance", DEFAULT_SPRINTER_RANGE))
+local function sprinterWarningRange(optionId)
+    local value = tonumber(getOption(optionId or "SprinterWarningDistance", DEFAULT_SPRINTER_RANGE))
     if not value then return DEFAULT_SPRINTER_RANGE end
     return math.max(MIN_CLOSE_HOSTILE_RANGE, math.min(MAX_RANGE, math.floor(value + 0.5)))
 end
 
-local function sprinterAlarmDistance()
-    local value = tonumber(getOption("SprinterAlarmDistance", DEFAULT_SPRINTER_ALARM_DISTANCE))
+local function sprinterAlarmDistance(optionId)
+    local value = tonumber(getOption(optionId or "SprinterAlarmDistance", DEFAULT_SPRINTER_ALARM_DISTANCE))
     if not value then return DEFAULT_SPRINTER_ALARM_DISTANCE end
     return math.max(MIN_CLOSE_HOSTILE_RANGE, math.min(MAX_RANGE, math.floor(value + 0.5)))
+end
+
+local function isMutant(zombie)
+    local mutants = rawget(_G, "PZTheMutants")
+    local api = type(mutants) == "table" and mutants.API
+    if type(api) ~= "table" or type(api.isMutant) ~= "function" then return false end
+    local ok, result = pcall(api.isMutant, zombie)
+    return ok and result == true
 end
 
 local function isSprinter(zombie)
@@ -1402,6 +1475,15 @@ local function sprinterIndicatorColour(distance, activeRange)
     )
 end
 
+local function mutantIndicatorColour(distance, activeRange)
+    return distanceGradientColour(
+        configuredIndicatorColour("MutantIndicatorNearColour", MUTANT_NEAR_COLOUR),
+        configuredIndicatorColour("MutantIndicatorFarColour", MUTANT_FAR_COLOUR),
+        distance,
+        activeRange
+    )
+end
+
 local function rearZombieBlinkDistance()
     local value = tonumber(getOption(
         "RearZombieBlinkDistance", DEFAULT_REAR_ZOMBIE_BLINK_DISTANCE
@@ -1413,9 +1495,9 @@ local function rearZombieBlinkDistance()
         * REAR_ZOMBIE_BLINK_DISTANCE_STEP
 end
 
-local function sprinterBlinkDistance()
+local function sprinterBlinkDistance(optionId)
     local value = tonumber(getOption(
-        "SprinterBlinkDistance", DEFAULT_SPRINTER_BLINK_DISTANCE
+        optionId or "SprinterBlinkDistance", DEFAULT_SPRINTER_BLINK_DISTANCE
     ))
     if not value then return DEFAULT_SPRINTER_BLINK_DISTANCE end
     value = math.max(MIN_SPRINTER_BLINK_DISTANCE,
@@ -1683,6 +1765,7 @@ local function carriesFirearm(project, shell)
 end
 
 local sprinterAlarmZombieIDs = {}
+local mutantAlarm = { zombieIDs = {}, previousZombieIDs = {} }
 local closeHostileNPCs = {}
 local lastCloseHostileNPCs = {}
 local lastSprinterAlarmZombieIDs = {}
@@ -2137,6 +2220,7 @@ local function drawAlertPreview()
         local alertWarnings = {}
         local rearZombiePreviewIndicators = {}
         local sprinterWarning
+        local mutantPreviewIndicators
 
         local previewKind = layoutPreview and "all" or activeAlertPreview.kind
         if previewKind == "alife" or previewKind == "all" then
@@ -2221,11 +2305,25 @@ local function drawAlertPreview()
             }
         end
 
+        if previewKind == "mutant" or previewKind == "all" then
+            mutantPreviewIndicators = {
+                { sectorIndex = 1, distance = 2, activeRange = 20,
+                    directionAngle = math.rad(-100),
+                    indicatorColour = mutantIndicatorColour(2, 20) },
+                { sectorIndex = 2, distance = 18, activeRange = 20,
+                    directionAngle = math.rad(140),
+                    indicatorColour = mutantIndicatorColour(18, 20) },
+            }
+        end
+
         drawRearZombieIndicators(rearZombiePreviewIndicators, screenWidth, screenHeight)
         if sprinterWarning then
             drawRearZombieIndicators(sprinterWarning.indicators, screenWidth, screenHeight,
                 "sprinter", sprinterBlinkThreshold, 1.2)
         end
+
+        drawRearZombieIndicators(mutantPreviewIndicators, screenWidth, screenHeight,
+            "mutant", sprinterBlinkDistance("MutantBlinkDistance"), 1.2)
 
         if #alertWarnings > 0 then
             local headerTexture = neatPanelTexture(NEAT_PANEL_HEADER_TEXTURE)
@@ -2371,12 +2469,33 @@ local function isStayWithMeCompanion(zombie)
     return ok and isCompanion == true
 end
 
+local function buildSpecialWarning(sectors, limit, activeRange, colourForDistance)
+    local indicators = {}
+    for sectorIndex = 1, limit do
+        local sector = sectors[sectorIndex]
+        if sector then
+            local distance = math.sqrt(sector.nearestDistance)
+            indicators[#indicators + 1] = {
+                sectorIndex = sectorIndex,
+                count = sector.count,
+                distance = distance,
+                activeRange = activeRange,
+                directionAngle = sector.directionAngle,
+                indicatorColour = colourForDistance(distance, activeRange),
+            }
+        end
+    end
+    if #indicators > 0 then return { indicators = indicators } end
+end
+
 local function scanNearbyThreats()
     warnings = {}
     rearZombieWarning = nil
     rearZombieIndicators = {}
     sprinterWarning = nil
+    mutantWarning = nil
     sprinterAlarmZombieIDs = {}
+    mutantAlarm.zombieIDs = {}
     closeHostileNPCs = {}
     compassALifeBridge.markers = {}
     local compassTracking = compassALifeBridge.requested == true
@@ -2393,15 +2512,20 @@ local function scanNearbyThreats()
     end
     local disableZombieAlerts = playerInVehicle and getOption("DisableZombieAlertsInVehicle", true)
     local disableSprinterAlerts = playerInVehicle and getOption("DisableSprinterAlertsInVehicle", true)
+    local disableMutantAlerts = playerInVehicle and getOption("DisableMutantAlertsInVehicle", true)
     local disableALifeAlerts = playerInVehicle and getOption("DisableALifeAlertsInVehicle", true)
     if disableALifeAlerts then warnALifeNPCs = false end
     local warnRearZombies = getOption("EnableRearZombieWarning", true) and not disableZombieAlerts
     local warnSprinters = getOption("EnableSprinterWarning", true) and not disableSprinterAlerts
+    local warnMutants = getOption("EnableMutantWarning", true) and not disableMutantAlerts
+    local warnMutantAlarm = getOption("EnableAlarmSound", true)
+        and getOption("EnableMutantAlarm", true) and not disableMutantAlerts
     local warnSprinterAlarm = getOption("EnableAlarmSound", true)
         and getOption("EnableSprinterAlarm", true) and not disableSprinterAlerts
     local warnCloseHostileAlarm = getOption("EnableCloseHostileAlarm", false) and not disableALifeAlerts
     if not warnALifeNPCs and not warnRearZombies and not warnCloseHostileAlarm
-            and not warnSprinters and not warnSprinterAlarm and not compassTracking then return end
+            and not warnSprinters and not warnMutants and not warnSprinterAlarm
+            and not warnMutantAlarm and not compassTracking then return end
 
     local project = ProjectALife
     if type(project) ~= "table" then
@@ -2411,7 +2535,8 @@ local function scanNearbyThreats()
         compassTracking = false
     end
     if not warnALifeNPCs and not warnRearZombies and not warnCloseHostileAlarm
-            and not warnSprinters and not warnSprinterAlarm and not compassTracking then return end
+            and not warnSprinters and not warnMutants and not warnSprinterAlarm
+            and not warnMutantAlarm and not compassTracking then return end
     local player = getSpecificPlayer(0)
     if player == nil or player:isDead() then return end
     local playerSquare = player:getCurrentSquare()
@@ -2446,10 +2571,24 @@ local function scanNearbyThreats()
             or DEFAULT_MAX_SPRINTER_INDICATORS) + 0.5)))
     local sprinterAlarmRange = warnSprinterAlarm and sprinterAlarmDistance() or 0
     local sprinterAlarmRangeSquared = sprinterAlarmRange * sprinterAlarmRange
+    local mutantSettings = {
+        range = warnMutants and sprinterWarningRange("MutantWarningDistance") or 0,
+        alarmRange = warnMutantAlarm and sprinterAlarmDistance("MutantAlarmDistance") or 0,
+        sameFloorOnly = getOption("MutantSameFloorOnly", true),
+        requireLineOfSight = getOption("MutantRequireLineOfSight", true),
+        ignoreFallen = getOption("MutantIgnoreFallen", false),
+        indicatorLimit = math.max(1, math.min(8,
+            math.floor((tonumber(getOption("MaxMutantIndicators", DEFAULT_MAX_SPRINTER_INDICATORS))
+                or DEFAULT_MAX_SPRINTER_INDICATORS) + 0.5))),
+    }
+    mutantSettings.rangeSquared = mutantSettings.range * mutantSettings.range
+    mutantSettings.alarmRangeSquared = mutantSettings.alarmRange * mutantSettings.alarmRange
+    mutantAlarm.blinkDistance = sprinterBlinkDistance("MutantBlinkDistance")
     local rearAngle = rearZombieWarningAngle()
     local rearAngleCos = math.cos(math.rad(rearAngle * 0.5))
     local scanRangeSquared = math.max(rangeSquared, compassRangeSquared, rearRangeSquared,
-        closeHostileRangeSquared, sprinterRangeSquared, sprinterAlarmRangeSquared)
+        closeHostileRangeSquared, sprinterRangeSquared, sprinterAlarmRangeSquared,
+        mutantSettings.rangeSquared, mutantSettings.alarmRangeSquared)
     local showDirectionArrow = getOption("ShowDirectionArrow", true)
     local showFirearmWarning = getOption("ShowFirearmWarning", false)
     local ignoreFallenZombies = getOption("IgnoreFallenZombies", false)
@@ -2458,6 +2597,14 @@ local function scanNearbyThreats()
     local sprinterSameFloorOnly = getOption("SprinterSameFloorOnly", true)
     local sprinterRequireLineOfSight = getOption("SprinterRequireLineOfSight", true)
     local sprinterIgnoreFallen = getOption("SprinterIgnoreFallen", false)
+    local sprinterSettings = {
+        rangeSquared = sprinterRangeSquared,
+        alarmRangeSquared = sprinterAlarmRangeSquared,
+        sameFloorOnly = sprinterSameFloorOnly,
+        requireLineOfSight = sprinterRequireLineOfSight,
+        ignoreFallen = sprinterIgnoreFallen,
+        indicatorLimit = sprinterIndicatorLimit,
+    }
     local threatsByStance = {}
     for _, stance in ipairs(STANCE_PRIORITY) do
         threatsByStance[stance] = {
@@ -2473,6 +2620,7 @@ local function scanNearbyThreats()
     local rearZombieIndicatorsBySector = {}
     local sprinters = 0
     local sprinterIndicatorsBySector = {}
+    local mutantIndicatorsBySector = {}
     for index = 0, list:size() - 1 do
         local shell = list:get(index)
         if shell ~= nil and not shell:isDead() then
@@ -2481,10 +2629,13 @@ local function scanNearbyThreats()
             local distanceSquared = dx * dx + dy * dy
             local nearbyFloor = math.abs(z - pz) <= 1
                 or ((warnSprinters or warnSprinterAlarm) and not sprinterSameFloorOnly)
+                or ((warnMutants or warnMutantAlarm) and not mutantSettings.sameFloorOnly)
             if nearbyFloor and distanceSquared <= scanRangeSquared then
                 local excluded = isStayWithMeCompanion(shell)
+                local mutant = isMutant(shell)
+                local specialSettings = mutant and mutantSettings or sprinterSettings
                 local rearCandidate = false
-                if warnRearZombies and distanceSquared <= rearRangeSquared then
+                if not mutant and warnRearZombies and distanceSquared <= rearRangeSquared then
                     local fallen = false
                     if ignoreFallenZombies then
                         local ok, onFloor = pcall(function() return shell:isOnFloor() end)
@@ -2504,14 +2655,17 @@ local function scanNearbyThreats()
                 end
                 local closeHostileCandidate = warnCloseHostileAlarm
                     and distanceSquared <= closeHostileRangeSquared
-                local canBeSprinter = (warnSprinters and distanceSquared <= sprinterRangeSquared)
-                    or (warnSprinterAlarm and distanceSquared <= sprinterAlarmRangeSquared)
-                local sprinterType = canBeSprinter and isSprinter(shell)
-                local sprinterCandidate = warnSprinters
-                    and distanceSquared <= sprinterRangeSquared and sprinterType
-                local sprinterAlarmCandidate = warnSprinterAlarm
-                    and distanceSquared <= sprinterAlarmRangeSquared and sprinterType
-                if sprinterType and sprinterIgnoreFallen then
+                local specialWarningEnabled = mutant and warnMutants or (not mutant and warnSprinters)
+                local specialAlarmEnabled = mutant and warnMutantAlarm or (not mutant and warnSprinterAlarm)
+                local canBeSprinter = (specialWarningEnabled and distanceSquared <= specialSettings.rangeSquared)
+                    or (specialAlarmEnabled and distanceSquared <= specialSettings.alarmRangeSquared)
+                local sprinterType = canBeSprinter
+                    and (mutant or isSprinter(shell))
+                local sprinterCandidate = specialWarningEnabled
+                    and distanceSquared <= specialSettings.rangeSquared and sprinterType
+                local sprinterAlarmCandidate = specialAlarmEnabled
+                    and distanceSquared <= specialSettings.alarmRangeSquared and sprinterType
+                if sprinterType and specialSettings.ignoreFallen then
                     local ok, onFloor = pcall(function() return shell:isOnFloor() end)
                     if ok and onFloor == true then
                         sprinterCandidate = false
@@ -2523,8 +2677,8 @@ local function scanNearbyThreats()
                         shell,
                         playerSquare,
                         cell,
-                        sprinterSameFloorOnly,
-                        sprinterRequireLineOfSight
+                        specialSettings.sameFloorOnly,
+                        specialSettings.requireLineOfSight
                     )
                     sprinterCandidate = sprinterCandidate and passesSprinterVisibility
                     sprinterAlarmCandidate = sprinterAlarmCandidate and passesSprinterVisibility
@@ -2562,12 +2716,13 @@ local function scanNearbyThreats()
                         dx, dy, arrowForwardX, arrowForwardY
                     )
                     local sectorIndex = sprinterSectorIndex(
-                        sprinterDirectionAngle, sprinterIndicatorLimit
+                        sprinterDirectionAngle, specialSettings.indicatorLimit
                     )
-                    local sector = sprinterIndicatorsBySector[sectorIndex]
+                    local sectors = mutant and mutantIndicatorsBySector or sprinterIndicatorsBySector
+                    local sector = sectors[sectorIndex]
                     if not sector then
                         sector = { count = 0, nearestDistance = math.huge }
-                        sprinterIndicatorsBySector[sectorIndex] = sector
+                        sectors[sectorIndex] = sector
                     end
                     sector.count = sector.count + 1
                     if distanceSquared < sector.nearestDistance then
@@ -2576,7 +2731,8 @@ local function scanNearbyThreats()
                     end
                 end
                 if not excluded and sprinterAlarmCandidate and uid == nil then
-                    sprinterAlarmZombieIDs[zombieAlertId(shell)] = true
+                    local alarmIDs = mutant and mutantAlarm.zombieIDs or sprinterAlarmZombieIDs
+                    alarmIDs[zombieAlertId(shell)] = true
                 end
 
                 if not excluded and alifeCandidate and uid ~= nil then
@@ -2661,23 +2817,10 @@ local function scanNearbyThreats()
         end
     end
     if sprinters > 0 then
-        sprinterWarning = {
-            indicators = {},
-        }
-        for sectorIndex = 1, sprinterIndicatorLimit do
-            local sector = sprinterIndicatorsBySector[sectorIndex]
-            if sector then
-                local distance = math.sqrt(sector.nearestDistance)
-                sprinterWarning.indicators[#sprinterWarning.indicators + 1] = {
-                    sectorIndex = sectorIndex,
-                    count = sector.count,
-                    distance = distance,
-                    activeRange = sprinterRange,
-                    directionAngle = sector.directionAngle,
-                    indicatorColour = sprinterIndicatorColour(distance, sprinterRange),
-                }
-            end
-        end
+        sprinterWarning = buildSpecialWarning(sprinterIndicatorsBySector,
+            sprinterIndicatorLimit, sprinterRange, sprinterIndicatorColour)
+        mutantWarning = buildSpecialWarning(mutantIndicatorsBySector,
+            mutantSettings.indicatorLimit, mutantSettings.range, mutantIndicatorColour)
     end
     compassALifeBridge.markers = compassMarkers
 end
@@ -2716,6 +2859,8 @@ playAlarmSound = function(soundOption, volumeOption, selectedSound, selectedVolu
         defaultSound = DEFAULT_CLOSE_HOSTILE_ALARM_SOUND
     elseif soundOption == "SprinterAlarmSound" then
         defaultSound = DEFAULT_SPRINTER_ALARM_SOUND
+    elseif soundOption == "MutantAlarmSound" then
+        defaultSound = DEFAULT_MUTANT_ALARM.sound
     end
     local index = math.floor(tonumber(selectedSound)
         or tonumber(getOption(soundOption or "AlarmSound", defaultSound)) or defaultSound)
@@ -2726,6 +2871,8 @@ playAlarmSound = function(soundOption, volumeOption, selectedSound, selectedVolu
         defaultVolume = DEFAULT_CLOSE_HOSTILE_ALARM_VOLUME
     elseif volumeOption == "SprinterAlarmVolume" then
         defaultVolume = DEFAULT_SPRINTER_ALARM_VOLUME
+    elseif volumeOption == "MutantAlarmVolume" then
+        defaultVolume = DEFAULT_MUTANT_ALARM.volume
     end
     local volume = tonumber(selectedVolume)
         or tonumber(getOption(volumeOption or "AlarmVolume", defaultVolume))
@@ -2782,6 +2929,7 @@ local ALARM_PREVIEW_OPTIONS = {
     { name = "regular", sound = "AlarmSound", volume = "AlarmVolume" },
     { name = "close-hostile", sound = "CloseHostileAlarmSound", volume = "CloseHostileAlarmVolume" },
     { name = "sprinter", sound = "SprinterAlarmSound", volume = "SprinterAlarmVolume" },
+    { name = "mutant", sound = "MutantAlarmSound", volume = "MutantAlarmVolume" },
 }
 
 local function onAlarmPreviewKeyPressed(key)
@@ -2833,11 +2981,14 @@ local function updateWarning()
         rearZombieWarning = nil
         rearZombieIndicators = {}
         sprinterWarning = nil
+        mutantWarning = nil
         sprinterAlarmZombieIDs = {}
+        mutantAlarm.zombieIDs = {}
         closeHostileNPCs = {}
         lastAlarmSignature = ""
         lastCloseHostileNPCs = {}
         lastSprinterAlarmZombieIDs = {}
+        mutantAlarm.previousZombieIDs = {}
         if not errorLogged then
             print("[Viewpoint Threat Detector] Detection failed: " .. tostring(err))
             errorLogged = true
@@ -2850,6 +3001,7 @@ local function updateWarning()
     local closeHostileAlarmEnabled = alarmSoundsEnabled
         and getOption("EnableCloseHostileAlarm", false)
     local sprinterAlarmEnabled = alarmSoundsEnabled and getOption("EnableSprinterAlarm", true)
+    local mutantAlarmEnabled = alarmSoundsEnabled and getOption("EnableMutantAlarm", true)
     local closeHostileAlarmEntered = false
     if closeHostileAlarmEnabled then
         for uid in pairs(closeHostileNPCs) do
@@ -2868,11 +3020,23 @@ local function updateWarning()
             end
         end
     end
+    local mutantAlarmEntered = false
+    if mutantAlarmEnabled then
+        for id in pairs(mutantAlarm.zombieIDs) do
+            if not mutantAlarm.previousZombieIDs[id] then
+                mutantAlarmEntered = true
+                break
+            end
+        end
+    end
     if signature ~= "" and signature ~= lastAlarmSignature
-            and alarmSoundsEnabled and not closeHostileAlarmEntered and not sprinterAlarmEntered then
+            and alarmSoundsEnabled and not closeHostileAlarmEntered
+            and not sprinterAlarmEntered and not mutantAlarmEntered then
         playAlarmSound()
     end
-    if sprinterAlarmEntered then
+    if mutantAlarmEntered then
+        playAlarmSound("MutantAlarmSound", "MutantAlarmVolume")
+    elseif sprinterAlarmEntered then
         playAlarmSound("SprinterAlarmSound", "SprinterAlarmVolume")
     elseif closeHostileAlarmEntered then
         playAlarmSound("CloseHostileAlarmSound", "CloseHostileAlarmVolume")
@@ -2880,6 +3044,7 @@ local function updateWarning()
     lastAlarmSignature = signature
     lastCloseHostileNPCs = closeHostileAlarmEnabled and closeHostileNPCs or {}
     lastSprinterAlarmZombieIDs = sprinterAlarmEnabled and sprinterAlarmZombieIDs or {}
+    mutantAlarm.previousZombieIDs = mutantAlarmEnabled and mutantAlarm.zombieIDs or {}
 end
 
 local function drawWarning()
@@ -2897,6 +3062,7 @@ local function drawWarning()
         return
     end
     local hasRadialIndicators = #rearZombieIndicators > 0
+        or (mutantWarning and #mutantWarning.indicators > 0)
         or (sprinterWarning and type(sprinterWarning.indicators) == "table"
             and #sprinterWarning.indicators > 0)
     if #warnings == 0 and not hasRadialIndicators then
@@ -2916,6 +3082,10 @@ local function drawWarning()
         if sprinterWarning and type(sprinterWarning.indicators) == "table" then
             drawRearZombieIndicators(sprinterWarning.indicators, screenWidth, screenHeight,
                 "sprinter", sprinterBlinkThreshold, 1.2)
+        end
+        if mutantWarning then
+            drawRearZombieIndicators(mutantWarning.indicators, screenWidth, screenHeight,
+                "mutant", mutantAlarm.blinkDistance, 1.2)
         end
         if #warnings == 0 then
             updateAlertDragHandle(nil, screenWidth, screenHeight)

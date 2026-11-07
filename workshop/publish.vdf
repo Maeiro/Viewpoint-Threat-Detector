@@ -94,6 +94,7 @@ Detect nearby A-Life NPCs, approaching zombies, and dangerous sprinters through 
 
 [h2]Latest features[/h2]
 [list]
+[*]Optional The Mutants support adds all-direction indicators that blend from dark green to neon green as they approach. Its category independently configures visual and alarm distances, blink distance, direction limit, floor/path/fallen filters, vehicle suppression, colors and previews. Mutants use a separate local alarm with its own toggle, sound (Space - Wall by default) and volume. Mutants have separate sectors and do not trigger ordinary zombie or purple sprinter indicators. Requires The Mutants public identity API.
 [*]Zombie tracking uses DayZ-style radial indicators only. Circular arcs sit around a screen-centered radius and point toward detected threats.
 [*]Regular rear-zombie indicators blink within a configurable critical distance (1.5 tiles by default); low climbable fences do not block the default line-of-sight check.
 [*]Sprinter indicators cover all directions, transition from magenta to purple with distance, and blink within a configurable distance (4 tiles by default).
@@ -106,5 +107,5 @@ Detect nearby A-Life NPCs, approaching zombies, and dangerous sprinters through 
 
 Workshop ID: 3812396995
 Mod ID: 3812396995/ALifeThreatAlert"
-	"changenote"	"1.4.79: Keep all alarms and sound previews local to the player instead of broadcasting them to other multiplayer clients. Includes the unassigned alarm preview shortcut fix from 1.4.78."
+	"changenote"	"1.4.82: Add The Mutants detection with fully independent ranges, filters, blinking, indicator limits, vehicle controls, colors and local alarm settings. Default mutant sound: Space - Wall."
 }
