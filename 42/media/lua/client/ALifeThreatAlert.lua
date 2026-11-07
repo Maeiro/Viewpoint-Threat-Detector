@@ -2758,7 +2758,8 @@ playAlarmSound = function(soundOption, volumeOption, selectedSound, selectedVolu
     end
 
     local ok, handle = pcall(function()
-        return emitter:playSound(sound)
+        -- playSound broadcasts to multiplayer clients even when using the UI emitter.
+        return emitter:playSoundImpl(sound, false, nil)
     end)
     if not ok or handle == nil or handle == 0 then
         print("[Viewpoint Threat Detector] Alarm playback failed: " .. tostring(handle)

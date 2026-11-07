@@ -106,5 +106,5 @@ Detect nearby A-Life NPCs, approaching zombies, and dangerous sprinters through 
 
 Workshop ID: 3812396995
 Mod ID: 3812396995/ALifeThreatAlert"
-	"changenote"	"1.4.78: Leave the in-game alarm preview key unassigned by default and migrate the old C binding, which conflicted with crouching."
+	"changenote"	"1.4.79: Keep all alarms and sound previews local to the player instead of broadcasting them to other multiplayer clients. Includes the unassigned alarm preview shortcut fix from 1.4.78."
 }
